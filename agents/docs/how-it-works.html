@@ -1,0 +1,495 @@
+<title>Zora Agent Harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+  :root{
+    --ground:#F4F6F4; --surface:#FFFFFF; --sunken:#EAEEEC;
+    --ink:#141A19; --body:#2B3533; --muted:#5C6764; --faint:#8A9591;
+    --line:#DCE2DF; --line-strong:#C3CCC8;
+    --accent:#0B6E63; --accent-soft:#E3F0ED; --accent-ink:#075048;
+    --warn:#8C5312; --warn-soft:#F7EDE0; --warn-line:#E0C7A6;
+    --role-plan:#6D5BB5; --role-impl:#2E7D4F; --role-val:#C2670E;
+    --shadow:0 1px 2px rgba(20,26,25,.05), 0 8px 24px -12px rgba(20,26,25,.18);
+    --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --serif:"Source Serif 4",Iowan Old Style,Georgia,Cambria,"Times New Roman",serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --ground:#0F1413; --surface:#161C1B; --sunken:#1C2423;
+      --ink:#EAEFEC; --body:#C6D0CC; --muted:#94A09C; --faint:#6E7A76;
+      --line:#28312F; --line-strong:#39443F;
+      --accent:#57C2B0; --accent-soft:#132724; --accent-ink:#8FD9CB;
+      --warn:#D99B4E; --warn-soft:#241A0F; --warn-line:#4A3821;
+      --role-plan:#9E8FD8; --role-impl:#63B183; --role-val:#E39445;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0F1413; --surface:#161C1B; --sunken:#1C2423;
+    --ink:#EAEFEC; --body:#C6D0CC; --muted:#94A09C; --faint:#6E7A76;
+    --line:#28312F; --line-strong:#39443F;
+    --accent:#57C2B0; --accent-soft:#132724; --accent-ink:#8FD9CB;
+    --warn:#D99B4E; --warn-soft:#241A0F; --warn-line:#4A3821;
+    --role-plan:#9E8FD8; --role-impl:#63B183; --role-val:#E39445;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--body);
+    font-family:var(--serif); font-size:17px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent-soft); color:var(--accent-ink)}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
+
+  .wrap{max-width:1180px; margin:0 auto; padding:0 24px 96px}
+
+  /* ---------- masthead ---------- */
+  header.mast{padding:64px 0 40px; border-bottom:1px solid var(--line)}
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 18px;
+  }
+  h1{
+    font-family:var(--sans); font-weight:700; font-size:clamp(38px,5.2vw,60px);
+    line-height:1.03; letter-spacing:-.026em; color:var(--ink);
+    margin:0 0 18px; text-wrap:balance;
+  }
+  .standfirst{
+    font-size:20px; line-height:1.55; color:var(--muted);
+    max-width:60ch; margin:0 0 34px;
+  }
+  .factbar{
+    display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+    border-radius:6px; background:var(--surface); overflow:hidden;
+  }
+  .fact{padding:14px 20px; border-right:1px solid var(--line); flex:1 1 190px; min-width:0}
+  .fact:last-child{border-right:0}
+  .fact dt{
+    font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--faint); margin:0 0 5px;
+  }
+  .fact dd{margin:0; font-family:var(--mono); font-size:13px; color:var(--ink); word-break:break-word}
+
+  /* ---------- layout ---------- */
+  .cols{display:grid; grid-template-columns:1fr; gap:0}
+  @media (min-width:1000px){
+    .cols{grid-template-columns:190px minmax(0,1fr); gap:56px; align-items:start}
+  }
+  nav.rail{display:none}
+  @media (min-width:1000px){
+    nav.rail{
+      display:block; position:sticky; top:32px; padding-top:52px;
+      font-family:var(--mono); font-size:12px; line-height:1.45;
+    }
+    nav.rail ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px}
+    nav.rail a{
+      display:block; padding:4px 0 4px 12px; color:var(--muted);
+      text-decoration:none; border-left:2px solid var(--line);
+    }
+    nav.rail a:hover{color:var(--accent); border-left-color:var(--accent)}
+    nav.rail .top > a{color:var(--ink); font-weight:600; margin-top:14px}
+    nav.rail .top:first-child > a{margin-top:0}
+  }
+
+  main{min-width:0}
+  section{padding-top:52px; scroll-margin-top:24px}
+  .sec-head{display:flex; align-items:baseline; gap:14px; margin-bottom:8px}
+  .sec-num{
+    font-family:var(--mono); font-size:13px; font-weight:600; color:var(--accent);
+    letter-spacing:.06em; flex:none;
+  }
+  h2{
+    font-family:var(--sans); font-weight:600; font-size:31px; letter-spacing:-.02em;
+    color:var(--ink); margin:0; line-height:1.15; text-wrap:balance;
+  }
+  .sec-sub{color:var(--muted); font-size:18px; margin:0 0 30px; max-width:64ch}
+  h3{
+    font-family:var(--sans); font-weight:600; font-size:19px; letter-spacing:-.01em;
+    color:var(--ink); margin:38px 0 10px; text-wrap:balance;
+  }
+  h3 .h3num{font-family:var(--mono); font-size:14px; color:var(--accent); margin-right:9px}
+  p{margin:0 0 15px; max-width:66ch}
+  ul,ol{margin:0 0 15px; padding-left:22px; max-width:66ch}
+  li{margin-bottom:7px}
+  li::marker{color:var(--faint)}
+  strong{color:var(--ink); font-weight:600}
+  em{color:var(--ink)}
+  a{color:var(--accent); text-decoration-thickness:1px; text-underline-offset:2px}
+  code{
+    font-family:var(--mono); font-size:.85em; background:var(--sunken);
+    padding:.13em .38em; border-radius:3px; color:var(--ink);
+  }
+
+  /* ---------- blocks ---------- */
+  .scroller{overflow-x:auto; margin:0 0 20px; border-radius:6px}
+  pre{
+    margin:0; padding:16px 18px; background:var(--surface); border:1px solid var(--line);
+    border-radius:6px; font-family:var(--mono); font-size:13px; line-height:1.6;
+    color:var(--ink); white-space:pre; min-width:min-content;
+  }
+  pre code{background:none; padding:0; font-size:inherit}
+  .cmt{color:var(--faint)}
+
+  table{border-collapse:collapse; width:100%; font-family:var(--sans); font-size:14.5px; min-width:520px}
+  .scroller table{margin:0}
+  th{
+    font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.13em;
+    text-transform:uppercase; color:var(--faint); text-align:left;
+    padding:0 14px 9px; border-bottom:1px solid var(--line-strong);
+  }
+  td{padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; color:var(--body)}
+  tbody tr:last-child td{border-bottom:0}
+  td:first-child, th:first-child{padding-left:0}
+  td:last-child, th:last-child{padding-right:0}
+  td strong, td code{white-space:nowrap}
+  .num{font-variant-numeric:tabular-nums}
+
+  .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px; vertical-align:baseline}
+
+  /* ---------- pipeline diagram ---------- */
+  .pipe{
+    background:var(--surface); border:1px solid var(--line); border-radius:8px;
+    padding:30px 24px 24px; margin:0 0 8px; text-align:center;
+  }
+  .node{
+    display:inline-block; font-family:var(--mono); font-size:12.5px; font-weight:500;
+    padding:8px 16px; border-radius:5px; border:1px solid var(--line-strong);
+    background:var(--ground); color:var(--ink);
+  }
+  .node.lead{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink); font-weight:600}
+  .node.you{border-style:dashed; color:var(--muted)}
+  .stem{width:1px; height:20px; background:var(--line-strong); margin:0 auto}
+  .fan{display:flex; justify-content:center; gap:14px; flex-wrap:wrap; margin-top:20px; position:relative}
+  .fan::before{
+    content:""; position:absolute; top:-20px; left:15%; right:15%; height:1px;
+    background:var(--line-strong);
+  }
+  .fan .node{position:relative}
+  .fan .node::before{
+    content:""; position:absolute; top:-20px; left:50%; width:1px; height:20px;
+    background:var(--line-strong);
+  }
+  .pipe-note{
+    font-family:var(--mono); font-size:11px; color:var(--faint); margin:22px 0 0;
+    letter-spacing:.02em;
+  }
+
+  /* ---------- callouts ---------- */
+  .callout{
+    border:1px solid var(--line); border-left:3px solid var(--accent);
+    background:var(--surface); border-radius:0 6px 6px 0;
+    padding:18px 22px; margin:0 0 22px; max-width:68ch;
+  }
+  .callout p:last-child{margin-bottom:0}
+  .callout .tag{
+    display:block; font-family:var(--mono); font-size:10px; font-weight:600;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin-bottom:8px;
+  }
+  .callout.warn{border-left-color:var(--warn); background:var(--warn-soft); border-color:var(--warn-line)}
+  .callout.warn .tag{color:var(--warn)}
+
+  blockquote{
+    margin:0 0 20px; padding:0 0 0 20px; border-left:2px solid var(--line-strong);
+    color:var(--ink); font-size:18px; line-height:1.55; max-width:62ch;
+  }
+  blockquote p{margin:0}
+
+  /* carries / dropped chips */
+  .chip{
+    font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.1em;
+    text-transform:uppercase; padding:2px 7px; border-radius:3px; white-space:nowrap;
+  }
+  .chip.keep{background:var(--accent-soft); color:var(--accent-ink)}
+  .chip.drop{background:var(--sunken); color:var(--muted)}
+
+  footer{
+    margin-top:72px; padding-top:26px; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:12px; color:var(--faint); line-height:1.7;
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Internal reference &middot; zora-pantheon</p>
+  <h1>Zora Agent Harness</h1>
+  <p class="standfirst">A plan &rarr; implement &rarr; validate harness for the HouseNumbers mortgage monorepo. What orchestrates it, how context is managed by hand, and how the agents are kept from inventing work.</p>
+  <dl class="factbar">
+    <div class="fact"><dt>Pattern</dt><dd>orchestrator&ndash;worker</dd></div>
+    <div class="fact"><dt>Agents</dt><dd>3 &middot; fable / opus / opus</dd></div>
+    <div class="fact"><dt>Source</dt><dd>housenumbers/zora-harness</dd></div>
+    <div class="fact"><dt>Loads from</dt><dd>~/.claude &middot; symlinked</dd></div>
+    <div class="fact"><dt>Repo footprint</dt><dd>none</dd></div>
+  </dl>
+</header>
+
+<div class="cols">
+
+  <nav class="rail" aria-label="Contents">
+    <ol>
+      <li class="top"><a href="#orchestration">1 &nbsp;Orchestration</a></li>
+      <li><a href="#pattern">The pattern</a></li>
+      <li><a href="#agents">The three agents</a></li>
+      <li><a href="#skills">Skills in play</a></li>
+      <li><a href="#rejected">Rejected</a></li>
+      <li class="top"><a href="#context">2 &nbsp;Context</a></li>
+      <li><a href="#budget">The budget</a></li>
+      <li><a href="#fresh">What starts fresh</a></li>
+      <li><a href="#handoff">What carries over</a></li>
+      <li><a href="#ledger">The ledger</a></li>
+      <li><a href="#restart">When to restart</a></li>
+      <li class="top"><a href="#practical">3 &nbsp;Practical</a></li>
+      <li><a href="#p1">3.1 Judgment at top</a></li>
+      <li><a href="#p2">3.2 Contradiction</a></li>
+      <li><a href="#p3">3.3 Refute first</a></li>
+      <li><a href="#p4">3.4 Evidence</a></li>
+      <li><a href="#p5">3.5 Scope</a></li>
+      <li><a href="#p6">3.6 Grounding</a></li>
+      <li><a href="#p7">3.7 Verify</a></li>
+      <li><a href="#p8">3.8 Limitation</a></li>
+      <li class="top"><a href="#quickref">Quick reference</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+  <!-- ===================== 1 ===================== -->
+  <section id="orchestration">
+    <div class="sec-head"><span class="sec-num">01</span><h2>Orchestration</h2></div>
+    <p class="sec-sub">What is actually driving this, and what was deliberately turned down.</p>
+
+    <h3 id="pattern">The pattern</h3>
+    <p>Plain <strong>orchestrator&ndash;worker</strong>, the arrangement Anthropic describes in <a href="https://www.anthropic.com/engineering/multi-agent-research-system">Building a multi-agent research system</a>: one lead coordinates, specialists run in their own context windows, results return to the lead.</p>
+    <p>The lead is <strong>your interactive session</strong> &mdash; not an agent. You are in the loop at the two points where judgment matters, with no lossy relay between you and the workers.</p>
+
+    <div class="pipe">
+      <span class="node you">you</span>
+      <div class="stem"></div>
+      <span class="node lead">lead session &middot; fable</span>
+      <div class="stem"></div>
+      <div class="fan">
+        <span class="node">planner</span>
+        <span class="node">implementer</span>
+        <span class="node">validator</span>
+      </div>
+      <p class="pipe-note">every result returns to the lead &middot; the three never talk to each other</p>
+    </div>
+    <p>Agents never call each other. Every handoff passes through the lead. That is not a limitation of the tooling &mdash; it is the design, for reasons in <a href="#p1">&sect;3.1</a>.</p>
+
+    <h3 id="agents">The three agents</h3>
+    <p>Three definitions in <code>agents/</code>, symlinked into <code>~/.claude/agents/</code>. Model and reasoning effort are pinned in each file&rsquo;s frontmatter.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Agent</th><th>Model</th><th>Effort</th><th>Tools</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="dot" style="background:var(--role-plan)"></span><code>zora-planner</code></td>
+            <td><code>fable</code></td><td><code>high</code></td>
+            <td><code>Write</code>, <code>Edit</code>, <code>NotebookEdit</code> <strong>denied</strong></td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:var(--role-impl)"></span><code>zora-implementer</code></td>
+            <td><code>opus</code></td><td><code>xhigh</code></td><td>all</td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:var(--role-val)"></span><code>zora-validator</code></td>
+            <td><code>opus</code></td><td><code>xhigh</code></td><td>all &middot; preloads <code>agent-browser</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The planner&rsquo;s read-only status is enforced by <code>disallowedTools</code>, not by asking it nicely &mdash; the tool is absent from its context entirely.</p>
+    <div class="scroller">
+<pre><code>CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude   <span class="cmt"># unless frontmatter sets one</span>
+CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmatter too</span></code></pre>
+    </div>
+
+    <h3 id="skills">Skills in play</h3>
+    <p>Written by this harness, in <code>skills/</code>:</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Skill</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code>zora-cycle</code></td><td>The pipeline. Plan &rarr; approve &rarr; build &rarr; gates &rarr; validate &rarr; judge &rarr; PR.</td></tr>
+          <tr><td><code>agent-browser</code></td><td>End-to-end verification against the live Tilt cluster and a real browser.</td></tr>
+          <tr><td><code>agent-review</code></td><td>Review loop with adversarial verification of each finding.</td></tr>
+          <tr><td><code>ask-slack-review</code></td><td>Reader-facing peer-review request.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The last three fill in skills the repo&rsquo;s own <code>/orchestrate</code> references but which were never written &mdash; so installing this harness also makes <code>/orchestrate</code> work end to end, on this machine only.</p>
+    <p>Consumed from <code>zora-pantheon</code>, read but never modified: <code>orchestrate</code> (the full pipeline <code>zora-cycle</code> is the light sibling of), <code>subagents</code> (sizing and tiers, which governs &sect;2), <code>tdd</code>, <code>grill-me</code>, <code>seed-local-db</code>, <code>review-and-evaluate</code>, <code>review-pr</code>, <code>manual-qa</code>, and <code>clickup</code>.</p>
+
+    <h3 id="rejected">Considered and rejected</h3>
+    <p><strong>Agent teams</strong> &mdash; teammates messaging each other directly, with a shared task list. Turned down for three concrete reasons:</p>
+    <ol>
+      <li>Teams don&rsquo;t isolate teammates in worktrees, and this repo has <strong>one shared local environment</strong>. The Tilt cluster and dev servers serve the main checkout, which makes the working tree shared state; two agents committing there sweep each other&rsquo;s half-finished files into unrelated commits.</li>
+      <li>Plan &rarr; implement &rarr; validate is <strong>sequential</strong>. Teams pay off on parallel independent exploration, not on a dependency chain.</li>
+      <li>Experimental, no session resumption, and every teammate permission prompt bubbles to the lead.</li>
+    </ol>
+    <p><strong>Dynamic workflows</strong> &mdash; a script holding the plan instead of the lead&rsquo;s turn-by-turn judgment. Genuinely useful for wide fan-out such as a codebase-wide audit. Overkill for a three-step chain.</p>
+
+    <div class="callout">
+      <span class="tag">Stale upstream note</span>
+      <p>The repo&rsquo;s <code>subagents</code> skill says the Agent tool cannot set reasoning effort per spawn, so <code>xhigh</code> requires a workflow. <strong>That is no longer true</strong> &mdash; <code>effort</code> is a valid agent frontmatter field and all three definitions set it. Don&rsquo;t let that line push you into a workflow you don&rsquo;t need. The repo file is left uncorrected because this harness stays out of that repository.</p>
+    </div>
+
+    <h3>Where the files live</h3>
+    <p>Real files sit in <code>housenumbers/zora-harness/</code>, outside the repo. <code>install.sh</code> symlinks them into <code>~/.claude/</code>, which Claude Code reads from <em>any</em> working directory &mdash; so the harness works inside <code>zora-pantheon</code> without a single file being added to it. Nothing to gitignore, nothing committable by accident, no diff for teammates.</p>
+  </section>
+
+  <!-- ===================== 2 ===================== -->
+  <section id="context">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Context management</h2></div>
+    <p class="sec-sub">Where the window budget goes, what each agent starts with, and what is deliberately thrown away between steps.</p>
+
+    <h3 id="budget">The budget</h3>
+    <p>From the repo&rsquo;s <code>subagents</code> skill: every model here has a <strong>1,000,000-token</strong> window, and quality degrades noticeably past <strong>~33% fill (~330k)</strong>. Past that point you get hallucinations, silently dropped requirements, and confident wrong answers.</p>
+    <p><strong>Design each task to land near 33% when it finishes</strong> &mdash; not to race toward it. The target is the end state of a healthy task, not a ceiling. An agent genuinely near the end when it crosses 33% should finish; interrupting mid-task is worse than mild degradation at the finish line. What must be avoided is an agent still doing substantive work at 50%+.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Consumer</th><th>Typical cost</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>Startup</td><td class="num">20&ndash;60k</td><td>System prompt, task prompt, preloaded skills &mdash; before any work</td></tr>
+          <tr><td>Reading</td><td class="num">30&ndash;60k</td><td>Characters &divide; 4. Design docs and source sweeps add up fast</td></tr>
+          <tr><td><strong>Iteration</strong></td><td class="num"><strong>100k+</strong></td><td>The silent killer &mdash; every tool result replays on later turns</td></tr>
+          <tr><td>Output</td><td>&mdash;</td><td>Counts, but the input side normally dominates</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Iteration is what catches people out. A build-until-green loop replays every failed test run, every <code>git diff</code>, every stack trace, on every subsequent turn. If the honest sum lands well past 330k, split the task before spawning.</p>
+
+    <h3 id="fresh">What starts fresh</h3>
+    <p><strong>Every agent, every time.</strong> Subagents don&rsquo;t inherit the lead&rsquo;s conversation. That is the default, and this harness leans on it rather than working around it.</p>
+    <div class="callout">
+      <span class="tag">The load-bearing one</span>
+      <p>An agent that talks itself into a shortcut while building &mdash; <em>&ldquo;this edge case probably can&rsquo;t happen&rdquo;</em> &mdash; will carry the same reasoning into checking its own work and pass itself. The validator receives the spec and the diff, and never the implementer&rsquo;s reasoning. Stripping that out is the mechanism, not a side effect. It is also why agents never hand off directly to one another: the lead is what performs the strip.</p>
+    </div>
+
+    <h3 id="handoff">What carries over</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Handoff</th><th>Carried</th><th>Deliberately dropped</th></tr></thead>
+        <tbody>
+          <tr><td>Lead &rarr; planner</td><td><span class="chip keep">keeps</span> Task, acceptance criteria, absolute paths to read</td><td>&mdash;</td></tr>
+          <tr><td>Planner &rarr; lead</td><td><span class="chip keep">keeps</span> The plan, as its final message</td><td><span class="chip drop">drops</span> Its exploration transcript</td></tr>
+          <tr><td>Lead &rarr; implementer</td><td><span class="chip keep">keeps</span> Approved plan verbatim, absolute paths, do-not-touch list</td><td><span class="chip drop">drops</span> Planner&rsquo;s reasoning</td></tr>
+          <tr><td>Implementer &rarr; lead</td><td><span class="chip keep">keeps</span> Files changed, tests added, verbatim gate output, divergences</td><td><span class="chip drop">drops</span> Its transcript</td></tr>
+          <tr><td>Lead &rarr; validator</td><td><span class="chip keep">keeps</span> Spec, diff, acceptance criteria</td><td><span class="chip drop">drops</span> <strong>The implementer&rsquo;s reasoning and its claims of success</strong></td></tr>
+          <tr><td>Validator &rarr; lead</td><td><span class="chip keep">keeps</span> Verdict, rungs executed, evidence, not-verified list</td><td>&mdash;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Absolute paths, always.</strong> A relative path resolves differently &mdash; or not at all &mdash; in an agent&rsquo;s working directory.</p>
+
+    <h3 id="ledger">The ledger</h3>
+    <p>For anything longer than one pass, the lead keeps a ledger in the scratchpad, in two parts: a <strong>standing-directives head</strong> of settled policy kept current, and a <strong>chronological log</strong> of launches with their task ids, the lane&rsquo;s base commit, and verdicts with their evidence.</p>
+    <p>After a compaction, <strong>reground from the head <em>and</em> the tail</strong>. A tail-only reground lets settled decisions quietly fade, and they return as re-litigated questions or, worse, as reversals nobody noticed.</p>
+    <p>A task counts as <strong>launched</strong> only when its id from the tool result is in the ledger. A written charter is not a running agent. When a long effort concludes, externalize the durable record &mdash; decisions, divergences, audit results &mdash; into the PR body before the scratchpad is cleaned up.</p>
+
+    <h3 id="restart">When to start a fresh agent</h3>
+    <ul>
+      <li><strong>Task too big for one healthy context</strong> &rarr; split at a natural seam (by package, by service, by layer) before spawning, not after.</li>
+      <li><strong>Approaching ~33% with substantial work left</strong> &rarr; have it checkpoint its state to disk, then hand to a fresh agent with a summary and that file. Never resume by replaying a giant transcript.</li>
+      <li><strong>Interrupted, dirty tree</strong> &rarr; launch a continuation agent whose first step is diffing working tree against last commit to classify done / partial / untouched, then finishing. Never a blind restart.</li>
+      <li><strong>Interrupted, clean tree at a known commit</strong> &rarr; relaunch the charter unedited.</li>
+      <li><strong>Still addressable</strong> &rarr; resume it by message from its last checkpoint, keeping its context, rather than restarting cold.</li>
+    </ul>
+    <p>Before assuming an agent is dead, <strong>positively enumerate what is alive</strong>. Subagents run inside the harness, not as OS processes &mdash; <code>ps</code> silence proves nothing. Liveness evidence is the transcript under the session&rsquo;s <code>subagents/</code> directory: a recent mtime or growing line count means alive. Until death is established, never mutate anything the agent shares, above all the lane branch&rsquo;s working tree.</p>
+
+    <h3>Keeping the lead lean</h3>
+    <p>The lead&rsquo;s context is the scarcest thing in the system, because it is the only one that spans the whole job. Protect it: delegate reading, take <strong>distilled conclusions rather than raw file contents</strong>, store durable state in the ledger, and never read what a subagent can read for you.</p>
+    <p>Transcripts record per-turn token usage, so occupancy is measurable &mdash; but never read the JSONL wholesale, since that overflows your own window. The extraction script lives in the repo&rsquo;s <code>subagents</code> skill. Its <em>empirical calibration</em> section is currently <strong>empty</strong>; one line per finished task &mdash; what it did, how many files, where it landed as a percentage &mdash; is what turns the sizing rules above from theory into judgment specific to this repo.</p>
+  </section>
+
+  <!-- ===================== 3 ===================== -->
+  <section id="practical">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Keeping agents practical</h2></div>
+    <p class="sec-sub">The two failure modes that waste the most time are an agent inventing a bug and fixing it, and an agent optimizing something nobody asked about.</p>
+    <p>Both come from the same root: an agent that would rather produce a plausible deliverable than report that there was nothing to do. Every mechanism below exists to make <em>&ldquo;nothing needed doing&rdquo;</em> a safe and expected answer.</p>
+
+    <h3 id="p1"><span class="h3num">3.1</span>Judgment stays at the top</h3>
+    <p>Results always return to the lead, never agent-to-agent. Every finding, plan, and claim passes a checkpoint that can catch a fabrication before it becomes work. Chain the agents directly and a hallucination in step one is committed code by step three, with nobody in between.</p>
+    <p>Design and adjudication are lead-tier work. When the evidence under a design changes &mdash; a stale reference, a corrected spec &mdash; the design is <strong>redone at the lead tier</strong>, never handed down with a &ldquo;re-verify your citations&rdquo; note attached.</p>
+
+    <h3 id="p2"><span class="h3num">3.2</span>Stop on contradiction</h3>
+    <p>Every agent carries an explicit clause:</p>
+    <blockquote><p>If the charter&rsquo;s factual premise &mdash; a claimed bug, a claimed missing feature, a spec citation &mdash; doesn&rsquo;t survive verification against the primary source, halt that item and report with citations instead of inventing.</p></blockquote>
+    <p>And the counterpart that makes it usable:</p>
+    <blockquote><p><strong>&ldquo;Verified already correct, no change made&rdquo; is a valid, expected outcome.</strong></p></blockquote>
+    <p>Without that second sentence the first one doesn&rsquo;t work. An agent told only to stop on contradiction still feels the pull to produce <em>something</em>, so it finds a smaller thing to fix. Naming the null result as a success removes the pull. The planner&rsquo;s output format has a dedicated <strong>Premise check</strong> section for exactly this, so a failed premise is a first-class deliverable rather than a footnote.</p>
+
+    <h3 id="p3"><span class="h3num">3.3</span>Refute before you act</h3>
+    <p>In <code>agent-review</code>, before acting on any significant finding &mdash; anything that would change shipped behavior or reverse a design decision &mdash; one verifier is spawned and charged with <strong>refuting</strong> it:</p>
+    <blockquote><p>Here is a claim about this code. Try to prove it wrong. Read the primary sources. Report CONFIRMED with citations, or REFUTED with citations. <strong>&ldquo;The observation is accurate but the verdict is wrong&rdquo; is a valid and common answer.</strong></p></blockquote>
+    <p>That last sentence catches the most common review failure: a reviewer notices something genuinely unusual and draws the wrong conclusion. The code is odd but correct, the pattern is deliberate, the &ldquo;missing&rdquo; check happens upstream.</p>
+    <p>One verifier per finding &mdash; a refutation attempt, not a voting panel. Trivial findings skip it. And then <strong>read the source yourself</strong> before directing any fix that reverses a prior ruling or claims an inconsistency with a spec. Reviewers fabricate plausible citations; so do verifiers. Open the cited line and look.</p>
+
+    <h3 id="p4"><span class="h3num">3.4</span>Evidence, or it didn&rsquo;t happen</h3>
+    <p>The validator&rsquo;s contract is that every claim carries its evidence: the command and its <strong>verbatim output</strong>, the query and what came back, the screenshot path, the <code>file:line</code>.</p>
+    <p>&ldquo;The endpoint works correctly&rdquo; is worthless. <code>curl</code> output plus the <code>mongosh</code> query showing the persisted document is a finding. This cuts both ways &mdash; it stops false failures as much as false passes. An agent that must paste the actual output cannot report a bug it did not observe.</p>
+    <ul>
+      <li><strong>A 2xx is not evidence.</strong> The claim is that data landed correctly; check the document.</li>
+      <li><strong>A clean pass requires a completed run.</strong> Zero findings from a run that errored, skipped rungs, or finished implausibly fast is a broken run, not a pass. Relaunch it.</li>
+      <li><strong><code>INCOMPLETE</code> is a legitimate verdict</strong>, ranked alongside PASS and FAIL so &ldquo;I couldn&rsquo;t finish&rdquo; never has to disguise itself as success.</li>
+      <li><strong>Reconcile numbers exactly.</strong> Baseline + delta = measured, identical across two runs. A mismatch is a hard stop, not noise.</li>
+    </ul>
+
+    <h3 id="p5"><span class="h3num">3.5</span>Scope discipline</h3>
+    <p><strong>Bank, don&rsquo;t fix.</strong> Real problems found outside the task&rsquo;s scope go into a running list with repro evidence, for a dedicated pass. Never fixed inline, never dropped. Both agent outputs have a required <strong>Out of scope</strong> section, which gives the agent somewhere to put the itch without acting on it.</p>
+    <p>This is the direct antidote to scope creep. An agent with no legitimate outlet for an observation either suppresses it, losing real information, or acts on it, blowing the diff. A banking list is the third option.</p>
+    <p>Alongside it: the TDD cycle&rsquo;s GREEN phase is defined as the <em>minimum</em> implementation, with refactoring a named third step rather than an open invitation. Sequential lanes sharing a module get explicit <strong>do-not-touch lists</strong>. And any <code>packages/*</code> change gets the lead&rsquo;s own diff read before shipping &mdash; the blast radius crosses every dependent service and exceeds any single reviewer&rsquo;s scope.</p>
+
+    <h3 id="p6"><span class="h3num">3.6</span>Grounding priority</h3>
+    <p>When state or policy is uncertain, in strict order: <strong>primary sources</strong> (live files, <code>git log</code>, the actual spec, a real query against the running environment), then <strong>live skills</strong>, then <strong>ledger notes or compacted memory</strong>.</p>
+    <p>Applied concretely: check an agent&rsquo;s <em>&ldquo;the environment is broken / the data is gone&rdquo;</em> blocker against the primary source before acting on it. A direct <code>mongosh</code> query or a <code>curl</code> against the gateway settles it in seconds, and it is wrong often enough to be worth the ten seconds every time. When two sources disagree, the charter <strong>names the conflict for adjudication</strong> &mdash; it never silently picks one.</p>
+
+    <h3 id="p7"><span class="h3num">3.7</span>Verify, never trust</h3>
+    <p>The lead re-runs the gates itself before advancing on any agent&rsquo;s self-report:</p>
+    <div class="scroller">
+<pre><code>turbo check
+turbo check:types
+CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=&lt;package&gt;</code></pre>
+    </div>
+    <p>Also: verify mechanical batch edits landed by <strong>grepping the expected before/after state</strong>, not by exit code. And audit PR-body citations &mdash; &ldquo;per spec X&rdquo;, &ldquo;per source Y at file:line&rdquo; &mdash; against the actual cited location. Agents produce plausible but fabricated attributions, and a PR body is where they are least likely to be checked.</p>
+
+    <h3 id="p8"><span class="h3num">3.8</span>The honest limitation</h3>
+    <div class="callout warn">
+      <span class="tag">Known weakness</span>
+      <p>Everything in this section is <strong>prose</strong>. Nothing executes it.</p>
+      <p>The <code>agentic-sdlc</code> framework states the problem precisely in its eighth invariant: <em>a process rule must be executable or CI-verified, because a rule nothing checks decays into a lie.</em></p>
+      <p>By that standard this harness is unverified. Nothing confirms the validator actually climbed all five rungs, that the implementer really ran the gates it pasted, or that the planner didn&rsquo;t quietly design around a contradiction. The rules hold only while the model chooses to follow them, and the failure is <strong>silent</strong>.</p>
+    </div>
+    <p>The mitigations that do exist are real but partial. The repo&rsquo;s <strong>TDD hooks</strong> genuinely block completion on failing tests &mdash; that one is executable. <strong><code>disallowedTools</code></strong> on the planner is enforced by the harness, not by prose. And the <strong>evidence requirement</strong> makes fabrication visible to a reading human, since a claim without pasted output is conspicuous.</p>
+    <p>The known next step is a machine-checkable verdict artifact the validator must emit, so that PASS becomes a file rather than a sentence. Until then: <strong>read the evidence, don&rsquo;t skim the verdict.</strong></p>
+  </section>
+
+  <!-- ===================== quick ref ===================== -->
+  <section id="quickref">
+    <div class="sec-head"><span class="sec-num">&mdash;</span><h2>Quick reference</h2></div>
+    <p class="sec-sub">Two deliberate stops: approve the plan, and make the final call. The cycle never merges.</p>
+    <div class="scroller">
+<pre><code>cd /Users/andressalguero/Documents/housenumbers/zora-pantheon
+git status                      <span class="cmt"># clean tree required</span>
+claude
+/zora-cycle &lt;task&gt;</code></pre>
+    </div>
+    <p>With the environment running in its own terminals, if the change is user-facing. The validator will never start these for you &mdash; it stops and asks.</p>
+    <div class="scroller">
+<pre><code>! pnpm dev:tilt:full             <span class="cmt"># backend cluster</span>
+! pnpm web-dev                   <span class="cmt"># web-app on :5173, not part of Tilt</span></code></pre>
+    </div>
+    <footer>
+      zora-harness &middot; source of truth in housenumbers/zora-harness &middot; loaded from ~/.claude via symlink<br>
+      Personal to this machine. Nothing is added to the zora-pantheon repository.
+    </footer>
+  </section>
+
+  </main>
+</div>
+</div>
