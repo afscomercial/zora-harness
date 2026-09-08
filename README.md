@@ -3,6 +3,8 @@
 A personal plan → implement → validate agent harness for the `zora-pantheon`
 monorepo.
 
+![The ten steps of the zora-harness cycle: task and acceptance criteria, clean-branch check, plan (zora-planner on Fable), lead and user approval, implement (zora-implementer on Opus, test-first), lead reruns the gates, validate (zora-validator on Opus with fresh context — tests, then local APIs and database, then browser), lead judges the evidence, rebase and open a PR, stop at green CI. FAIL loops back to implement; INCOMPLETE returns to validation. Below, the local user scope: zora-harness/ is symlinked by install.sh into ~/.claude/agents and skills, which Claude Code loads against the zora-pantheon main checkout served by Tilt, the service APIs, MongoDB and the web-app.](agents/docs/zora-harness.png)
+
 The real files live here, outside the repo. `install.sh` symlinks them into
 `~/.claude/`, which Claude Code reads from **any** working directory — so the
 harness is available inside `zora-pantheon` without a single file being added to
