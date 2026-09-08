@@ -122,7 +122,7 @@ pnpm --filter b2b-e2e exec playwright test <spec>
 pnpm --filter b2b-e2e test:fresh                 # ignore cached auth contexts
 ```
 
-The suite defaults to the **dev environment** (`https://dev.b2b-app.housenumbers.io/`),
+The suite defaults to the **shared dev environment**, not local,
 so confirm `BASE_URL` before you trust a result — a green run against dev proves
 nothing about local code, and it is the single easiest way to produce a confident
 false pass here. Specs are chained (setup → login → create → upload → the rest) and

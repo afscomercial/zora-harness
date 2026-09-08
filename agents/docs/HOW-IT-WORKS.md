@@ -411,7 +411,7 @@ don't skim the verdict.**
 ## Quick reference
 
 ```bash
-cd /Users/andressalguero/Documents/housenumbers/zora-pantheon
+cd ~/Documents/housenumbers/zora-pantheon
 git status                    # clean tree required
 claude
 /zora-cycle <task>
