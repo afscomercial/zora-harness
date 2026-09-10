@@ -1,6 +1,6 @@
 ---
 name: agent-review
-description: Run the review loop over a committed zora-pantheon branch or PR — a scoped review, adversarial verification of each significant finding before acting on it, triage into fix/bank/reject, and repeat until the diff is genuinely satisfactory. Use when the orchestrate pipeline reaches its review stage, or when the user asks for a reviewed-and-adjudicated verdict on a branch rather than a raw list of review comments.
+description: Run the review loop over a committed zora-pantheon branch or PR — a scoped review, adversarial verification of each significant finding before acting on it, triage into fix/bank/reject, and at most two fix rounds before the rest goes to the user. Use when the orchestrate pipeline reaches its review stage, or when the user asks for a reviewed-and-adjudicated verdict on a branch rather than a raw list of review comments.
 ---
 
 # The Review Loop
@@ -22,7 +22,7 @@ git status                      # must be clean
 git log --oneline -3            # confirm what is actually being reviewed
 ```
 
-## Step 1: Review
+## Step 1: Review — once
 
 Run the repo's own reviewer over the committed branch or PR:
 
@@ -33,6 +33,10 @@ Run the repo's own reviewer over the committed branch or PR:
 - `review-pr` — the raw rigorous review, when you only want findings.
 
 Both live in `.agents/skills/` and discover branch scope themselves. Let them.
+
+Run it **once**. Never re-run a reviewer, or ask one to "look again" or "find more":
+that raises the count and drowns the signal, and the extra findings are mostly
+invented — which is how a one-line change reaches round seven.
 
 ## Step 2: Verify before you act
 
@@ -69,20 +73,29 @@ Findings against `packages/*` get a personal diff read before shipping regardles
 who confirmed them. A shared package's blast radius exceeds any single service's
 review scope, and the reviewer only saw one service.
 
-## Step 4: Loop
+## Step 4: Fix — two rounds at most
 
-Fix, re-commit, re-review, re-verify. Continue until **you** are satisfied with the
-diff.
+Fix the **Fix now** bucket, re-commit, then close the round: re-run the gates and
+re-verify the findings you just fixed. A round does **not** re-run the full review
+hunting for new findings.
 
-Reviewer silence is not the bar. A review that returns zero findings is a clean pass
-only if its agents all completed — an errored reviewer, an implausibly fast run, or
-a wrong agent count means the run is broken, and the fix is to relaunch it, not to
-record a pass.
+**Two rounds, then stop.** After the second, anything still open goes to the user
+with its evidence: fix further, accept and document it, or re-plan. A documented
+known issue is a better outcome than a third round.
+
+A review that returns zero findings is a clean pass only if its agents all
+completed — an errored reviewer, an implausibly fast run, or a wrong agent count
+means the run is broken; relaunch it rather than recording a pass. Zero findings from
+a run that did complete is a real result, not a failure to look.
 
 ## Output
+
+Inside a `/zora-cycle` run, write this to `$RUN/review.md`; otherwise report it in
+chat.
 
 - The diff's current state and your verdict on it.
 - Per finding: the claim, the verification result with citations, the bucket, and
   why.
+- Rounds used, and anything left open for the user.
 - The banked list, carried forward intact.
 - What you chose not to review, and why.
