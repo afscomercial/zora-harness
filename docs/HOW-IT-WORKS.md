@@ -168,10 +168,11 @@ If the honest sum lands well past 330k, split the task before spawning.
 **Every agent, every time.** Subagents don't inherit the lead's conversation. That's
 the default, and this harness leans on it rather than working around it.
 
-**The validator's freshness is the load-bearing one.** It receives:
+**Validation's freshness is the load-bearing one.** Codex QA on the VM — or the local
+fallback validator — receives:
 
-- ✅ the spec / acceptance criteria
-- ✅ the diff (`git diff <base>...HEAD`), which it reads itself
+- ✅ the QA charter: task, acceptance criteria, commits, environment, required rungs
+- ✅ the diff (`git diff <base>...<feature>`), which it reads itself
 - ❌ the implementer's reasoning
 - ❌ the implementer's report of success
 - ❌ the conversation where a trade-off got rationalized
@@ -182,6 +183,10 @@ and pass itself. Stripping that out is the mechanism, not a side effect. It is a
 why agents never hand off directly to each other: the lead is what performs the
 strip.
 
+On the QA VM this holds by construction: the VM has never had a copy of the
+implementer's transcript, so there is nothing to leak, even by accident. The charter
+is the only thing that crosses, and the dispatcher refuses one that carries narrative.
+
 ### What carries over
 
 | Handoff | Carried | Deliberately dropped |
@@ -190,8 +195,10 @@ strip.
 | Planner → lead | The plan, as its final message | Its exploration transcript |
 | Lead → implementer | Approved plan **verbatim**, absolute paths, do-not-touch list | Planner's reasoning |
 | Implementer → lead | Files changed, tests added, verbatim gate output, divergences | Its transcript |
-| Lead → validator | Spec + diff + acceptance criteria | **The implementer's reasoning and claims** |
-| Validator → lead | Verdict, rungs executed, evidence, not-verified list | — |
+| Lead → Codex QA, via `run-codex-qa` | The pushed commit and a charter: task, acceptance criteria, commits, Tilt profile, services, test accounts, required rungs | **The implementer's reasoning, claims that it works, excuses** |
+| Codex QA → lead | Downloaded files: `verdict.json`, the VM's manifest with checksums, Codex's event log, `evidence/` | Anything else on the VM |
+| Lead → fallback validator | Spec + diff + acceptance criteria | **The implementer's reasoning and claims** |
+| Fallback validator → lead | Verdict, rungs executed, evidence, not-verified list | — |
 
 **Absolute paths, always.** A relative path resolves differently — or not at all —
 in an agent's working directory.
@@ -453,13 +460,23 @@ claude
 /zora-cycle <task>
 ```
 
-With Tilt and the web-app running in their own terminals if the change is
-user-facing:
+Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first
+run, set up the VM and `~/.zora-harness/qa.env` (`skills/zora-cycle/qa/README.md`), then
+try a dispatch that sends nothing:
+
+```bash
+~/.claude/skills/zora-cycle/qa/run-codex-qa --run "$RUN" --base "$BASE_SHA" \
+  --commit "$HEAD_SHA" --profile documents --dry-run
+```
+
+Only the local fallback validator needs your own environment running:
 
 ```
 ! pnpm dev:tilt:full
 ! pnpm web-dev
 ```
 
-Two deliberate stops: **approve the plan**, and **make the final call**. One possible
-interruption: the validator asking you to start Tilt. The cycle never merges.
+Two deliberate stops: **approve the plan**, and **make the final call**. Possible
+interruptions: the QA VM is unreachable or its environment fails — the lead reruns the
+same commit or falls back to the local validator — or the fallback validator asks you
+to start Tilt. The cycle never merges.

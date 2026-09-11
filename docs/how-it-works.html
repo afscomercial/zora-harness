@@ -222,6 +222,7 @@
   <dl class="factbar">
     <div class="fact"><dt>Pattern</dt><dd>orchestrator&ndash;worker</dd></div>
     <div class="fact"><dt>Agents</dt><dd>3 &middot; fable / opus / fable</dd></div>
+    <div class="fact"><dt>QA</dt><dd>codex &middot; gpt-6-astra &middot; VM</dd></div>
     <div class="fact"><dt>Source</dt><dd>housenumbers/zora-harness</dd></div>
     <div class="fact"><dt>Loads from</dt><dd>~/.claude &middot; symlinked</dd></div>
     <div class="fact"><dt>Repo footprint</dt><dd>none</dd></div>
@@ -237,6 +238,7 @@
       <li><a href="#agents">The three agents</a></li>
       <li><a href="#skills">Skills in play</a></li>
       <li><a href="#rejected">Rejected</a></li>
+      <li><a href="#qavm">QA on a VM</a></li>
       <li class="top"><a href="#context">2 &nbsp;Context</a></li>
       <li><a href="#budget">The budget</a></li>
       <li><a href="#fresh">What starts fresh</a></li>
@@ -275,9 +277,9 @@
       <div class="fan">
         <span class="node">planner</span>
         <span class="node">implementer</span>
-        <span class="node">validator</span>
+        <span class="node you">QA &middot; Codex on the VM</span>
       </div>
-      <p class="pipe-note">every result returns to the lead &middot; the three never talk to each other</p>
+      <p class="pipe-note">every result returns to the lead &middot; none of them talk to each other &middot; QA is a remote job, not a subagent</p>
     </div>
     <p>Agents never call each other. Every handoff passes through the lead. That is not a limitation of the tooling &mdash; it is the design, for reasons in <a href="#p1">&sect;3.1</a>.</p>
 
@@ -298,12 +300,16 @@
           </tr>
           <tr>
             <td><span class="dot" style="background:var(--role-val)"></span><code>zora-validator</code></td>
-            <td><code>fable</code></td><td><code>high</code></td><td>all &middot; preloads <code>agent-browser</code> &middot; writes <code>verdict.json</code></td>
+            <td><code>fable</code></td><td><code>high</code></td><td>all &middot; preloads <code>agent-browser</code> &middot; writes <code>verdict.json</code> &middot; <strong>local fallback</strong></td>
+          </tr>
+          <tr>
+            <td><span class="dot" style="background:var(--role-val)"></span><strong>Codex QA</strong> <span class="chip drop">remote job</span></td>
+            <td><code>gpt-6-astra</code></td><td><code>high</code></td><td>full access, but only inside the disposable QA VM</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p>The planner&rsquo;s read-only status is enforced by a <code>tools</code> allowlist, not by asking it nicely. It has no Bash on purpose: Bash writes files as easily as <code>Write</code> does, so denying <code>Write</code> and <code>Edit</code> alone would leave it writable. The validator runs on a different model from the implementer, also on purpose &mdash; a reviewer from the author&rsquo;s own model shares the author&rsquo;s blind spots.</p>
+    <p>The planner&rsquo;s read-only status is enforced by a <code>tools</code> allowlist, not by asking it nicely. It has no Bash on purpose: Bash writes files as easily as <code>Write</code> does, so denying <code>Write</code> and <code>Edit</code> alone would leave it writable. Validation runs on a different model from the implementer, also on purpose &mdash; normally another vendor entirely, OpenAI&rsquo;s Astra on the QA VM &mdash; because a reviewer from the author&rsquo;s own model shares the author&rsquo;s blind spots.</p>
     <div class="scroller">
 <pre><code>CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude   <span class="cmt"># unless frontmatter sets one</span>
 CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmatter too</span></code></pre>
@@ -339,6 +345,23 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
       <p>The repo&rsquo;s <code>subagents</code> skill says the Agent tool cannot set reasoning effort per spawn, so <code>xhigh</code> requires a workflow. <strong>That is no longer true</strong> &mdash; <code>effort</code> is a valid agent frontmatter field and all three definitions set it. Don&rsquo;t let that line push you into a workflow you don&rsquo;t need. The repo file is left uncorrected because this harness stays out of that repository.</p>
     </div>
 
+    <h3 id="qavm">QA on an isolated VM</h3>
+    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh k3d cluster with the Tilt profile, seeds clean data, and runs Codex (<code>gpt-6-astra</code>) through the whole ladder.</p>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Step</th><th>Where</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>Freeze</td><td>laptop</td><td>Clean tree, commit pushed to origin, base and feature SHAs recorded</td></tr>
+          <tr><td>Charter</td><td>laptop</td><td>Facts only; the dispatcher refuses missing sections, unfilled markers or narrative</td></tr>
+          <tr><td>Build</td><td>VM</td><td>Disposable clone in detached HEAD, fresh k3d cluster, Tilt profile, web-app, seeded data</td></tr>
+          <tr><td>Validate</td><td>VM</td><td>Codex climbs all five rungs; it may restart a crashed service only if it records the restart</td></tr>
+          <tr><td>Return</td><td>VM &rarr; laptop</td><td><code>verdict.json</code>, a manifest with checksums, the event log and <code>evidence/</code>, safely extracted into <code>$RUN/qa/&lt;job-id&gt;/</code></td></tr>
+          <tr><td>Judge</td><td>laptop</td><td><code>verdict-check.sh --remote</code>, then the lead reads the evidence as untrusted data and decides</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>An environment failure comes back as <strong>INCOMPLETE</strong> and is rerun on the same commit &mdash; never sent to the implementer. When the VM is unavailable, the local Fable <code>zora-validator</code> takes over. Setup and the security model live in <code>skills/zora-cycle/qa/README.md</code>.</p>
+
     <h3>Where the files live</h3>
     <p>Real files sit in <code>housenumbers/zora-harness/</code>, outside the repo. <code>install.sh</code> symlinks them into <code>~/.claude/</code>, which Claude Code reads from <em>any</em> working directory &mdash; so the harness works inside <code>zora-pantheon</code> without a single file being added to it. Nothing to gitignore, nothing committable by accident, no diff for teammates.</p>
   </section>
@@ -368,7 +391,7 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
     <p><strong>Every agent, every time.</strong> Subagents don&rsquo;t inherit the lead&rsquo;s conversation. That is the default, and this harness leans on it rather than working around it.</p>
     <div class="callout">
       <span class="tag">The load-bearing one</span>
-      <p>An agent that talks itself into a shortcut while building &mdash; <em>&ldquo;this edge case probably can&rsquo;t happen&rdquo;</em> &mdash; will carry the same reasoning into checking its own work and pass itself. The validator receives the spec and the diff, and never the implementer&rsquo;s reasoning. Stripping that out is the mechanism, not a side effect. It is also why agents never hand off directly to one another: the lead is what performs the strip.</p>
+      <p>An agent that talks itself into a shortcut while building &mdash; <em>&ldquo;this edge case probably can&rsquo;t happen&rdquo;</em> &mdash; will carry the same reasoning into checking its own work and pass itself. Validation receives a charter of facts and the diff, and never the implementer&rsquo;s reasoning. Stripping that out is the mechanism, not a side effect. It is also why agents never hand off directly to one another: the lead is what performs the strip. On the QA VM it holds by construction: the VM has never had a copy of the implementer&rsquo;s transcript.</p>
     </div>
 
     <h3 id="handoff">What carries over</h3>
@@ -380,8 +403,10 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
           <tr><td>Planner &rarr; lead</td><td><span class="chip keep">keeps</span> The plan, as its final message</td><td><span class="chip drop">drops</span> Its exploration transcript</td></tr>
           <tr><td>Lead &rarr; implementer</td><td><span class="chip keep">keeps</span> Approved plan verbatim, absolute paths, do-not-touch list</td><td><span class="chip drop">drops</span> Planner&rsquo;s reasoning</td></tr>
           <tr><td>Implementer &rarr; lead</td><td><span class="chip keep">keeps</span> Files changed, tests added, verbatim gate output, divergences</td><td><span class="chip drop">drops</span> Its transcript</td></tr>
-          <tr><td>Lead &rarr; validator</td><td><span class="chip keep">keeps</span> Spec, diff, acceptance criteria</td><td><span class="chip drop">drops</span> <strong>The implementer&rsquo;s reasoning and its claims of success</strong></td></tr>
-          <tr><td>Validator &rarr; lead</td><td><span class="chip keep">keeps</span> Verdict, rungs executed, evidence, not-verified list</td><td>&mdash;</td></tr>
+          <tr><td>Lead &rarr; Codex QA</td><td><span class="chip keep">keeps</span> The pushed commit and a charter: task, criteria, commits, Tilt profile, services, test accounts, required rungs</td><td><span class="chip drop">drops</span> <strong>The implementer&rsquo;s reasoning, claims that it works, excuses</strong></td></tr>
+          <tr><td>Codex QA &rarr; lead</td><td><span class="chip keep">keeps</span> Downloaded files: <code>verdict.json</code>, the manifest with checksums, the event log, <code>evidence/</code></td><td><span class="chip drop">drops</span> Anything else on the VM</td></tr>
+          <tr><td>Lead &rarr; fallback validator</td><td><span class="chip keep">keeps</span> Spec, diff, acceptance criteria</td><td><span class="chip drop">drops</span> <strong>The implementer&rsquo;s reasoning and its claims of success</strong></td></tr>
+          <tr><td>Fallback validator &rarr; lead</td><td><span class="chip keep">keeps</span> Verdict, rungs executed, evidence, not-verified list</td><td>&mdash;</td></tr>
         </tbody>
       </table>
     </div>
@@ -468,6 +493,7 @@ CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=&lt;package&g
       <p>By that standard most of this harness is still unverified. Nothing confirms that the implementer really ran the gates it pasted, or that the planner didn&rsquo;t quietly design around a contradiction. Those rules hold only while the model chooses to follow them, and the failure is <strong>silent</strong>.</p>
     </div>
     <p>What <em>is</em> enforced: the repo&rsquo;s <strong>TDD hooks</strong> genuinely block completion on failing tests; the planner&rsquo;s <strong><code>tools</code> allowlist</strong> is enforced by the harness, not by prose; and <strong><code>verdict-check.sh</code></strong>, which the lead runs before believing a PASS, refuses a verdict that is for an older commit, predates uncommitted changes, skipped the static gates or the tests, claims a rung with no evidence file on disk, or calls itself PASS while carrying a defect.</p>
+    <p>For remote QA, <strong><code>verdict-check.sh --remote</code></strong> also checks the VM&rsquo;s manifest: the exact commit and base that were sent, a clean checkout, no tracked file modified by Codex, a working environment, and a checksum for every downloaded file. It guards against accidents, not a compromised VM &mdash; which is why the VM holds only sandbox credentials.</p>
     <p>What the script cannot check is whether the evidence is <em>honest</em> &mdash; a validator could write files that say the right things. So: <strong>read the evidence, don&rsquo;t skim the verdict.</strong></p>
   </section>
 
@@ -481,7 +507,12 @@ git status                      <span class="cmt"># clean tree required</span>
 claude
 /zora-cycle &lt;task&gt;</code></pre>
     </div>
-    <p>With the environment running in its own terminals, if the change is user-facing. The validator will never start these for you &mdash; it stops and asks.</p>
+    <p>Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first run, set up the VM and <code>~/.zora-harness/qa.env</code> (see <code>skills/zora-cycle/qa/README.md</code>), then try a dispatch that sends nothing:</p>
+    <div class="scroller">
+<pre><code>~/.claude/skills/zora-cycle/qa/run-codex-qa --run "$RUN" --base "$BASE_SHA" \
+  --commit "$HEAD_SHA" --profile documents --dry-run</code></pre>
+    </div>
+    <p>Only the local fallback validator needs your own environment running, and it never starts it for you &mdash; it stops and asks.</p>
     <div class="scroller">
 <pre><code>! pnpm dev:tilt:full             <span class="cmt"># backend cluster</span>
 ! pnpm web-dev                   <span class="cmt"># web-app on :5173, not part of Tilt</span></code></pre>
