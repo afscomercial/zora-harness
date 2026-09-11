@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# run-codex-qa — hand one exact commit to the remote QA VM, wait for the job, and bring its
+# verdict and evidence back into the run folder. Codex is a remote job, not a subagent:
+# this script is the only interface between the Claude Code lead and the VM.
+#
+#   run-codex-qa --run <run-dir> --base <sha> --commit <sha> --profile <tilt-profile> [--dry-run]
+#
+# Run it from the zora-pantheon checkout, after writing <run-dir>/qa-charter.md from
+# qa/charter.template.md. Results land in <run-dir>/qa/<job-id>/; check them with
+#   verdict-check.sh <run-dir>/qa/<job-id> --remote
+#
+# Config: ~/.zora-harness/qa.env, or the same variables in the environment
+#   ZORA_QA_HOST         ssh destination for the VM (a ~/.ssh/config alias is best)
+#   ZORA_QA_REMOTE_HOME  QA home on the VM, e.g. /home/zqa/zora-qa
+#   ZORA_QA_REPO         clone URL the VM uses (default: this checkout's origin URL)
+#   ZORA_QA_TIMEOUT      seconds to wait for a job (default 10800)
+#   ZORA_QA_POLL         seconds between status polls (default 30)
+#
+# Exit 0  the job finished and its results were downloaded (verdict-check decides pass/fail)
+# Exit 1  preflight refused: nothing was sent to the VM
+# Exit 2  usage error
+# Exit 3  transport or remote failure: VM unreachable, job lost, timed out, or an unsafe result archive
+#
+# Internal: run-codex-qa --extract <archive.tar.gz> <dest-dir> runs only the safe extractor.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage()  { echo "usage: run-codex-qa --run <run-dir> --base <sha> --commit <sha> --profile <tilt-profile> [--dry-run]" >&2; exit 2; }
+refuse() { echo "REFUSED    $*" >&2; exit 1; }
+failed() { echo "FAILED     $*" >&2; exit 3; }
+
+# Only regular files, only allowed names and types, size-capped, nothing escaping the
+# destination. Any violation rejects the whole archive and extracts nothing: a result that
+# tries to smuggle a link or a stray path is not trusted in part.
+safe_extract() {
+  python3 - "$1" "$2" <<'PY'
+import os, sys, tarfile
+src, dest = sys.argv[1], sys.argv[2]
+ALLOWED_TOP = {"verdict.json", "remote-manifest.json", "codex-events.jsonl"}
+ALLOWED_EXT = {".txt", ".log", ".json", ".jsonl", ".md", ".png", ".jpg", ".jpeg", ".webm", ".zip"}
+MAX_FILE, MAX_TOTAL, MAX_FILES = 25 << 20, 400 << 20, 2000
+problems, plan, total = [], [], 0
+try:
+    tf = tarfile.open(src, "r:gz")
+except (OSError, tarfile.TarError) as e:
+    print(f"REJECTED   not a readable gzip tar archive: {e}", file=sys.stderr)
+    sys.exit(1)
+with tf:
+    for m in tf.getmembers():
+        name = m.name
+        norm = os.path.normpath(name)
+        if os.path.isabs(name) or norm == ".." or norm.startswith("../"):
+            problems.append(f"path escapes the job folder: {name!r}")
+            continue
+        if m.isdir():
+            continue
+        if not m.isfile():
+            problems.append(f"not a regular file (link, device or fifo): {name!r}")
+            continue
+        in_top = norm in ALLOWED_TOP
+        in_evidence = norm.startswith("evidence/") and os.path.splitext(norm)[1].lower() in ALLOWED_EXT
+        if not (in_top or in_evidence):
+            problems.append(f"name or file type not allowed: {name!r}")
+            continue
+        if m.size > MAX_FILE:
+            problems.append(f"file over {MAX_FILE >> 20} MB: {name!r}")
+            continue
+        total += m.size
+        plan.append((m, norm))
+    if total > MAX_TOTAL:
+        problems.append(f"archive holds {total >> 20} MB, over the {MAX_TOTAL >> 20} MB cap")
+    if len(plan) > MAX_FILES:
+        problems.append(f"archive holds {len(plan)} files, over the {MAX_FILES} cap")
+    if problems:
+        for p in problems:
+            print(f"REJECTED   {p}", file=sys.stderr)
+        sys.exit(1)
+    for m, norm in plan:
+        target = os.path.join(dest, norm)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with tf.extractfile(m) as fin, open(target, "wb") as fout:
+            for chunk in iter(lambda: fin.read(1 << 20), b""):
+                fout.write(chunk)
+        os.chmod(target, 0o644)
+print(f"extracted  {len(plan)} files, {total} bytes")
+PY
+}
+
+if [ "${1:-}" = "--extract" ]; then
+  [ $# -eq 3 ] || usage
+  mkdir -p "$3"
+  safe_extract "$2" "$3"
+  exit 0
+fi
+
+RUN="" BASE="" COMMIT="" PROFILE="" DRY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --run|--base|--commit|--profile)
+      [ $# -ge 2 ] || usage
+      case "$1" in --run) RUN="$2" ;; --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;; esac
+      shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    *) usage ;;
+  esac
+done
+[ -n "$RUN" ] && [ -n "$BASE" ] && [ -n "$COMMIT" ] && [ -n "$PROFILE" ] || usage
+
+CONF="${ZORA_QA_CONFIG:-$HOME/.zora-harness/qa.env}"
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+
+# ---------------------------------------------------------------- preflight (local only)
+RUN="$(cd "$RUN" 2>/dev/null && pwd)" || refuse "run folder does not exist"
+TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || refuse "run this from the zora-pantheon checkout"
+cd "$TOP"
+
+[[ "$PROFILE" =~ ^[a-z0-9-]+$ ]] || refuse "profile must be a plain name like 'documents'"
+grep -qE "^[[:space:]]*\"$PROFILE\"[[:space:]]*:" tilt/Tiltfile 2>/dev/null \
+  || refuse "unknown Tilt profile '$PROFILE' (see PROFILES in tilt/Tiltfile)"
+
+COMMIT_FULL="$(git rev-parse --verify --quiet "${COMMIT}^{commit}")" || refuse "unknown commit: $COMMIT"
+BASE_FULL="$(git rev-parse --verify --quiet "${BASE}^{commit}")" || refuse "unknown base commit: $BASE"
+HEAD_FULL="$(git rev-parse HEAD)"
+[ "$HEAD_FULL" = "$COMMIT_FULL" ] \
+  || refuse "HEAD is ${HEAD_FULL:0:12}, not the commit to validate (${COMMIT_FULL:0:12}); check it out first"
+[ -z "$(git status --porcelain)" ] \
+  || refuse "the working tree has uncommitted changes; commit them first, since the VM only sees pushed commits"
+git merge-base --is-ancestor "$BASE_FULL" "$COMMIT_FULL" \
+  || refuse "base ${BASE_FULL:0:12} is not an ancestor of ${COMMIT_FULL:0:12}"
+git fetch --quiet origin || refuse "git fetch origin failed, so the push cannot be confirmed"
+[ -n "$(git branch -r --contains "$COMMIT_FULL" 2>/dev/null)" ] \
+  || refuse "commit ${COMMIT_FULL:0:12} is not on any origin branch; push it first (git push -u origin HEAD)"
+
+CHARTER="$RUN/qa-charter.md"
+[ -f "$CHARTER" ] || refuse "no charter at $CHARTER (start from qa/charter.template.md)"
+python3 - "$CHARTER" "$BASE_FULL" "$COMMIT_FULL" <<'PY' || refuse "the charter is not clean (see above)"
+import re, sys
+path, base, commit = sys.argv[1:4]
+text = re.sub(r"<!--.*?-->", "", open(path, encoding="utf-8").read(), flags=re.S)
+problems = []
+for heading in ("## Commits", "## Task", "## Acceptance criteria", "## Environment", "## Required rungs"):
+    if not re.search(r"^" + re.escape(heading) + r"[ \t]*$", text, flags=re.M | re.I):
+        problems.append(f"missing section: {heading}")
+if base not in text:
+    problems.append(f"the base commit {base[:12]} does not appear in full")
+if commit not in text:
+    problems.append(f"the feature commit {commit[:12]} does not appear in full")
+if "<<FILL" in text:
+    problems.append("unfilled <<FILL: ...>> markers remain")
+NARRATIVE = ["implementer", "already works", "already fixed", "known limitation",
+             "i implemented", "we implemented", "i fixed", "we fixed", "works on my machine"]
+for n, line in enumerate(text.splitlines(), 1):
+    low = line.lower()
+    for phrase in NARRATIVE:
+        if phrase in low:
+            problems.append(f"line {n} carries narrative ({phrase!r}): {line.strip()[:90]}")
+for p in problems:
+    print(f"CHARTER    {p}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
+
+REPO_URL="${ZORA_QA_REPO:-$(git remote get-url origin)}"
+[[ "$REPO_URL" != *"'"* ]] || refuse "repository URL contains a quote"
+JOB="$(date -u +%Y%m%dT%H%M%SZ)-${COMMIT_FULL:0:12}"
+JOBDIR="$RUN/qa/$JOB"
+mkdir -p "$JOBDIR/.download"
+HARNESS_SHA="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
+write_dispatch() {  # $1 = remote status, or "requested"
+  python3 - "$JOBDIR/dispatch.json" "$1" <<PY
+import json, sys, datetime
+path, status = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(path))
+except (OSError, ValueError):
+    d = {"job_id": "$JOB", "base": "$BASE_FULL", "commit": "$COMMIT_FULL", "profile": "$PROFILE",
+         "host": "${ZORA_QA_HOST:-}", "remote_dir": "${ZORA_QA_REMOTE_HOME:-}/jobs/$JOB",
+         "harness": "$HARNESS_SHA",
+         "requested_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+d["status"] = status
+if status not in ("requested", "dry-run"):
+    d["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+json.dump(d, open(path, "w"), indent=2)
+PY
+}
+
+if [ "$DRY" = 1 ]; then
+  write_dispatch dry-run
+  echo "DRY RUN    preflight passed; nothing was sent"
+  echo "  job        $JOB"
+  echo "  commit     $COMMIT_FULL   base $BASE_FULL   profile $PROFILE"
+  echo "  host       ${ZORA_QA_HOST:-(not configured)}   remote ${ZORA_QA_REMOTE_HOME:-(not configured)}/jobs/$JOB"
+  echo "  results    $JOBDIR"
+  exit 0
+fi
+
+[ -n "${ZORA_QA_HOST:-}" ] || refuse "ZORA_QA_HOST is not set (see $CONF)"
+[ -n "${ZORA_QA_REMOTE_HOME:-}" ] || refuse "ZORA_QA_REMOTE_HOME is not set (see $CONF)"
+[[ "$ZORA_QA_REMOTE_HOME" =~ ^/[A-Za-z0-9._/-]+$ ]] || refuse "ZORA_QA_REMOTE_HOME must be an absolute plain path"
+write_dispatch requested
+
+# ---------------------------------------------------------------- dispatch
+SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 "$ZORA_QA_HOST")
+REMOTE_JOB="$ZORA_QA_REMOTE_HOME/jobs/$JOB"
+"${SSH[@]}" true 2>/dev/null || failed "cannot reach $ZORA_QA_HOST over ssh"
+
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+cp "$HERE/qa-job.sh" "$HERE/codex-qa-prompt.md" "$HERE/verdict.schema.json" "$STAGE/"
+cp "$CHARTER" "$STAGE/qa-charter.md"
+tar -czf - -C "$STAGE" . | "${SSH[@]}" "mkdir -p '$REMOTE_JOB/in' && tar -xzf - -C '$REMOTE_JOB/in'" \
+  || failed "could not upload the job bundle"
+"${SSH[@]}" "cd '$REMOTE_JOB' && setsid nohup bash in/qa-job.sh --job '$JOB' --dir '$REMOTE_JOB' --repo '$REPO_URL' --base '$BASE_FULL' --commit '$COMMIT_FULL' --profile '$PROFILE' > job.log 2>&1 < /dev/null & echo started" >/dev/null \
+  || failed "could not start the job on the VM"
+echo "STARTED    job $JOB on $ZORA_QA_HOST"
+
+DEADLINE=$(( $(date +%s) + ${ZORA_QA_TIMEOUT:-10800} ))
+LAST=""
+while :; do
+  STATUS="$("${SSH[@]}" "cat '$REMOTE_JOB/status' 2>/dev/null || echo starting" 2>/dev/null || echo unreachable)"
+  if [ "$STATUS" != "$LAST" ]; then echo "[$(date +%H:%M:%S)] $STATUS"; LAST="$STATUS"; fi
+  case "$STATUS" in done|failed) break ;; esac
+  [ "$(date +%s)" -lt "$DEADLINE" ] \
+    || { write_dispatch timeout; failed "timed out; the job may still be running on the VM in $REMOTE_JOB"; }
+  sleep "${ZORA_QA_POLL:-30}"
+done
+
+"${SSH[@]}" "cat '$REMOTE_JOB/result.tar.gz'" > "$JOBDIR/.download/result.tar.gz" \
+  || { write_dispatch download-failed; failed "could not download the results"; }
+if ! safe_extract "$JOBDIR/.download/result.tar.gz" "$JOBDIR"; then
+  write_dispatch rejected
+  failed "the result archive failed the safety checks; nothing was extracted, and it is kept unopened in $JOBDIR/.download/"
+fi
+write_dispatch "$STATUS"
+
+echo "RESULTS    $JOBDIR"
+echo "NEXT       bash ~/.claude/skills/zora-cycle/verdict-check.sh '$JOBDIR' --remote"

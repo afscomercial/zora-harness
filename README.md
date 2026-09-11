@@ -28,7 +28,7 @@ Restart Claude Code afterwards. Re-run after adding an agent or skill.
 |---|---|---|
 | `zora-planner` | fable / high | Investigates, returns a file-level plan. Read-only by a `tools` allowlist: no Bash, Write or Edit. |
 | `zora-implementer` | opus / xhigh | Builds the plan test-first under the repo's TDD contract. |
-| `zora-validator` | fable / high | Tries to prove the change does not work, on a different model from the implementer. Writes `verdict.json`. Preloads `agent-browser`. |
+| `zora-validator` | fable / high | Local fallback validator, used when the QA VM is unavailable. Tries to prove the change does not work and writes `verdict.json`. Preloads `agent-browser`. |
 
 The lead — your interactive session, on Fable — makes the final call on whether
 work is done. That is deliberate: the repo's own `subagents` skill reserves final QA
@@ -51,6 +51,14 @@ The last three fill in skills that the repo's own `/orchestrate` references but
 which were never written — so installing this also makes `/orchestrate` work end to
 end, on this machine only.
 
+### Remote QA — `skills/zora-cycle/qa/`
+
+Validation runs as a remote job on a dedicated VM: the lead freezes and pushes a commit,
+writes a charter, and `run-codex-qa` sends it over SSH. The VM builds a disposable k3d +
+Tilt copy of the local environment and runs Codex (`gpt-6-astra`) through the validation
+ladder; the verdict and evidence come back as files for `verdict-check.sh --remote` and
+the lead's judgment. Setup and the security model: `skills/zora-cycle/qa/README.md`.
+
 ## Design notes
 
 **Why the validator gets a fresh context.** It receives the spec and the diff, never
@@ -58,10 +66,16 @@ the implementer's reasoning. An agent that talks itself into a shortcut while
 building will carry the same reasoning into checking its own work and pass itself.
 Isolation is the mechanism, not a side effect.
 
-**Why the validator runs on a different model.** Fresh context is not enough if the
+**Why validation runs on a different model.** Fresh context is not enough if the
 reviewer shares the author's model — it shares the author's blind spots too. The
-implementer is on Opus and the validator on Fable. Sonnet is the cheaper swap if cost
-matters; the only rule is that it differs from the implementer's.
+implementer is on Opus; QA normally runs on another vendor entirely (OpenAI's Astra on
+the QA VM), and the local fallback on Fable. The only rule is that it differs from the
+implementer's.
+
+**Why QA runs on a separate VM.** Codex needs Docker, Kubernetes, a browser and the
+network to test for real, and an agent with that much access belongs on a machine that
+holds nothing valuable — not your laptop. The VM also never has a copy of the
+implementer's reasoning, so the fresh-eyes rule holds by construction.
 
 **Why a PASS is a file.** The validator writes `verdict.json` and its evidence into
 the run folder, and `skills/zora-cycle/verdict-check.sh` refuses a PASS that is for

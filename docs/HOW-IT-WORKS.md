@@ -42,7 +42,8 @@ Three definitions in `agents/`, symlinked into `~/.claude/agents/`:
 |---|---|---|---|
 | `zora-planner` | `fable` | `high` | allowlist: `Read`, `Grep`, `Glob`, web, skills — **no Bash, Write or Edit** |
 | `zora-implementer` | `opus` | `xhigh` | all |
-| `zora-validator` | `fable` | `high` | all, preloads `agent-browser`, writes `verdict.json` |
+| `zora-validator` | `fable` | `high` | all, preloads `agent-browser`, writes `verdict.json` — local fallback |
+| **Codex QA** — remote job, not a subagent | `gpt-6-astra` | `high` | full access, but only inside the disposable QA VM |
 
 Model and reasoning effort are pinned in each file's frontmatter. The planner's
 read-only status is enforced by a `tools` allowlist, not by asking it nicely. It has
@@ -109,6 +110,18 @@ review). Overkill for a three-step chain.
 > agent frontmatter field and all three definitions set it. Don't let that line push
 > you into a workflow you don't need. The repo file is not corrected because this
 > harness stays out of that repository.
+
+### QA on an isolated VM
+
+Validation normally runs as a remote job. The lead freezes the commit, pushes it, and
+writes a QA charter — commits, task, acceptance criteria, Tilt profile, services, test
+accounts, required rungs, and nothing about how the change was built. `run-codex-qa`
+sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh k3d
+cluster with the Tilt profile, seeds clean data, and runs Codex (`gpt-6-astra`) through
+the whole ladder. The verdict, a manifest with checksums, Codex's event log and the
+evidence come back as files. Codex is never a Claude Code subagent; the dispatcher is
+the only interface. When the VM is unavailable, the local Fable `zora-validator` takes
+over. Setup and the security model live in `skills/zora-cycle/qa/README.md`.
 
 ### Where the files live
 
@@ -420,6 +433,10 @@ What *is* enforced:
   static gates or the tests, claims a rung with no evidence file on disk, or calls
   itself PASS while carrying a defect. A PASS is now a file checked by a script, not
   a sentence.
+- **`verdict-check.sh --remote`** also checks the QA VM's manifest: the exact commit and
+  base that were sent, a clean checkout, no tracked file modified by Codex, a working
+  environment, and a checksum for every downloaded file. It guards against accidents,
+  not a compromised VM — which is why the VM holds only sandbox credentials.
 
 What the script cannot check is whether the evidence is *honest* — a validator could
 write files that say the right things. So: **read the evidence, don't skim the

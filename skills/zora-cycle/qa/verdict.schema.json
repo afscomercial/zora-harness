@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "commit", "branch", "validated_at", "rungs", "findings", "not_verified"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["PASS", "FAIL", "INCOMPLETE"] },
+    "commit": { "type": "string" },
+    "branch": { "type": "string" },
+    "validated_at": { "type": "string" },
+    "rungs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rung", "name", "status", "evidence", "reason"],
+        "properties": {
+          "rung": { "type": "integer", "enum": [1, 2, 3, 4, 5] },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["pass", "fail", "not-run", "skipped"] },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "reason": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "summary", "evidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["defect", "concern"] },
+          "summary": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "not_verified": { "type": "array", "items": { "type": "string" } }
+  }
+}
