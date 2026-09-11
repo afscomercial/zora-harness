@@ -21,7 +21,7 @@
 
 ## Environment
 
-- Tilt profile: <<FILL: profile>>
+- Tilt profile or services: <<FILL: the profile name, or the service list given to --services>>
 - Relevant services: <<FILL: e.g. api-gateway, loan-application>>
 - Test accounts: <<FILL: seeded personas from seed-local-db, and what each may do>>
 - Entry point: <<FILL: web-app route, API endpoint, or test command>>

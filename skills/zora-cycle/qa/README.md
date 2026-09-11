@@ -33,8 +33,10 @@ verdict-check.sh --remote → lead judges
 | `codex-qa-prompt.md` | VM (sent each job) | Codex's standing instructions — the validator protocol for Linux/Kubernetes |
 | `charter.template.md` | laptop | What the lead fills in per run |
 | `verdict.schema.json` | VM (sent each job) | Forces Codex's final message into the `verdict.json` shape |
+| `qa-browser.cjs` | VM (sent each job) | The browser network boundary: loopback and approved auth origins only, self-tested before Codex starts |
+| `redact-evidence.py` | VM (sent each job) | Scrubs every known secret value (runner env, `secrets/`, the QA password) and token-shaped strings from the output before it is hashed; Tilt echoes build args and pod env values |
 
-`qa-job.sh`, the prompt and the schema are uploaded with every job, so the VM always
+`qa-job.sh`, the prompt, the schema and the browser helper are uploaded with every job, so the VM always
 runs the harness version that dispatched it. The VM needs tools and credentials, not
 harness files.
 
@@ -42,7 +44,8 @@ harness files.
 
 - HEAD is not the commit being validated, or the tree has uncommitted changes
 - the base is not an ancestor of the commit, or the commit is not on any origin branch
-- the Tilt profile does not exist in `tilt/Tiltfile`
+- the Tilt profile, or any service given with `--services`, does not exist in `tilt/Tiltfile`;
+  or both `--profile` and `--services` were given
 - the charter is missing a section, the full SHAs, or still has `<<FILL` markers
 - the charter carries narrative: mentions of the implementer, "already works",
   "known limitation", "I fixed" and similar
@@ -128,7 +131,8 @@ trust boundary**, so the VM must hold nothing worth stealing:
   from, Playwright's browser download host — is the control that actually limits
   exfiltration. Everything else: deny.
 - **Evidence coming back is untrusted.** The dispatcher extracts only regular files with
-  allowed names and types (`.txt .log .json .jsonl .md .png .jpg .webm .zip .html .cjs`),
+  allowed names and types (`.txt .log .json .jsonl .md .png .jpg .webm .zip .html .cjs
+  .patch .diff`),
   size-capped, with no links and no paths escaping the job folder; one violation rejects
   the whole archive. The lead reads evidence as data and never executes it. Read captured
   `.html` pages as text: opening one in a browser runs its scripts.
@@ -172,8 +176,9 @@ QA stops the configured development services and any running Docker-based Kind
 or k3d clusters before creating its own cluster. It never restarts the old environment. Unknown processes occupying QA ports cause an INCOMPLETE result.
 The web server uses `--strictPort` so a different app on 5173 cannot silently
 be tested. The runner stops only processes and clusters it started.
-Tilt and the web app remain at `127.0.0.1:10350` and `127.0.0.1:5173` on the VPS;
-these URLs do not belong in the laptop configuration.
+Tilt and the web app listen on `127.0.0.1:10350` and `127.0.0.1:5173` on the VPS (the
+browser reaches the web app as `localhost:5173`); these URLs do not belong in the laptop
+configuration.
 
 The Linux wrappers supplied per job keep kubectl on the job's kubeconfig.
 Install `mongosh` on the host (`npm install -g mongosh`) so scripts in the QA
@@ -206,6 +211,12 @@ setup can be called fully verified.
   exact auth-origin exception below handles the required development login.
   Before authenticated feature QA, define approved test-auth origins and seeded
   accounts explicitly; do not weaken the boundary just to obtain PASS.
+- Every dashboard route loads its entity lists through a layout that calls
+  insurance-provider-service, so any browser rung on the dashboard needs `insurance-provider`
+  in the services, even when the change itself touches none of them. Without it, each call
+  waits for the gateway's ~300 s timeout and the page never loads.
+- The runner deletes `KV_REST_API_URL` and `KV_REST_API_TOKEN` from the job's web-app `.env`:
+  that entity cache is a shared Upstash instance, and a QA run must not read or write it.
 - Regression checks: `python3 test-extractor.py` (local or Linux) and
   `python3 test-runner.py` (Linux, mocked external commands).
 
@@ -241,10 +252,20 @@ If the account requires SSO or MFA, password storage alone is insufficient; repo
 INCOMPLETE and configure an appropriate test-account/session flow.
 
 `QA_AUTH_ORIGINS` is a comma-separated list of exact approved development Clerk
-origins. Only auth bootstrap/sign-in may use these exceptions to localhost-only
-product traffic. The runner reports the list to QA; browser scripts must enforce
-it. This prompt policy is not a VM firewall. The first smoke verdict remains
-INCOMPLETE; credentials and an allowed origin do not retroactively change it.
+origins — the Clerk frontend API, the hosted sign-in page and `https://img.clerk.com`.
+Only auth bootstrap/sign-in may use these exceptions to localhost-only product traffic.
+
+The runner enforces the list in the browser through `qa-browser.cjs`, which Codex must
+launch Chromium with: Chromium's host resolver refuses every other host name (redirect
+hops included), request interception aborts the rest (IP literals), and service workers
+are blocked. Before Codex starts, the runner self-tests it against outside hosts, a bare
+IP and the cloud metadata address, and a failing self-test makes the job INCOMPLETE.
+This is a browser boundary, not a VM firewall: Codex's own shell still has the network.
+
+The browser uses `http://localhost:5173`, because Clerk returns there after sign-in
+(`CLERK_AUTHORIZED_PARTIES`). Starting on `127.0.0.1` splits the session cookies across
+two hosts. An improvised forwarding proxy broke that return leg in an early job: the
+server had signed the user in, but the page never arrived.
 
 ## Dedicated QA VPS: idle between jobs
 

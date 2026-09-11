@@ -3,7 +3,11 @@
 # verdict and evidence back into the run folder. Codex is a remote job, not a subagent:
 # this script is the only interface between the Claude Code lead and the VM.
 #
-#   run-codex-qa --run <run-dir> --base <sha> --commit <sha> --profile <tilt-profile> [--dry-run]
+#   run-codex-qa --run <run-dir> --base <sha> --commit <sha> \
+#                (--profile <tilt-profile> | --services "<svc> <svc> ...") [--dry-run]
+#
+# --services starts only the named Tilt services (infrastructure is derived by the
+# Tiltfile); --profile starts a named profile. Give exactly one.
 #
 # Run it from the zora-pantheon checkout, after writing <run-dir>/qa-charter.md from
 # qa/charter.template.md. Results land in <run-dir>/qa/<job-id>/; check them with
@@ -26,7 +30,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-usage()  { echo "usage: run-codex-qa --run <run-dir> --base <sha> --commit <sha> --profile <tilt-profile> [--dry-run]" >&2; exit 2; }
+usage()  { echo "usage: run-codex-qa --run <run-dir> --base <sha> --commit <sha> (--profile <tilt-profile> | --services \"<svc> ...\") [--dry-run]" >&2; exit 2; }
 refuse() { echo "REFUSED    $*" >&2; exit 1; }
 failed() { echo "FAILED     $*" >&2; exit 3; }
 
@@ -38,7 +42,7 @@ safe_extract() {
 import os, sys, tarfile
 src, dest = sys.argv[1], sys.argv[2]
 ALLOWED_TOP = {"verdict.json", "remote-manifest.json", "codex-events.jsonl"}
-ALLOWED_EXT = {".txt", ".log", ".json", ".jsonl", ".md", ".png", ".jpg", ".jpeg", ".webm", ".zip", ".html", ".cjs"}
+ALLOWED_EXT = {".txt", ".log", ".json", ".jsonl", ".md", ".png", ".jpg", ".jpeg", ".webm", ".zip", ".html", ".cjs", ".patch", ".diff"}
 MAX_FILE, MAX_TOTAL, MAX_FILES = 25 << 20, 400 << 20, 2000
 problems, plan, total = [], [], 0
 try:
@@ -94,19 +98,20 @@ if [ "${1:-}" = "--extract" ]; then
   exit 0
 fi
 
-RUN="" BASE="" COMMIT="" PROFILE="" DRY=0
+RUN="" BASE="" COMMIT="" PROFILE="" SERVICES="" DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run|--base|--commit|--profile)
+    --run|--base|--commit|--profile|--services)
       [ $# -ge 2 ] || usage
-      case "$1" in --run) RUN="$2" ;; --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;; esac
+      case "$1" in --run) RUN="$2" ;; --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;; --services) SERVICES="$2" ;; esac
       shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) usage ;;
   esac
 done
-[ -n "$RUN" ] && [ -n "$BASE" ] && [ -n "$COMMIT" ] && [ -n "$PROFILE" ] || usage
+[ -n "$RUN" ] && [ -n "$BASE" ] && [ -n "$COMMIT" ] && [ -n "$PROFILE$SERVICES" ] || usage
+if [ -n "$PROFILE" ] && [ -n "$SERVICES" ]; then echo "choose --profile or --services, not both" >&2; exit 2; fi
 
 CONF="${ZORA_QA_CONFIG:-$HOME/.zora-harness/qa.env}"
 # shellcheck disable=SC1090
@@ -117,9 +122,19 @@ RUN="$(cd "$RUN" 2>/dev/null && pwd)" || refuse "run folder does not exist"
 TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || refuse "run this from the zora-pantheon checkout"
 cd "$TOP"
 
-[[ "$PROFILE" =~ ^[a-z0-9-]+$ ]] || refuse "profile must be a plain name like 'documents'"
-grep -qE "^[[:space:]]*\"$PROFILE\"[[:space:]]*:" tilt/Tiltfile 2>/dev/null \
-  || refuse "unknown Tilt profile '$PROFILE' (see PROFILES in tilt/Tiltfile)"
+if [ -n "$PROFILE" ]; then
+  [[ "$PROFILE" =~ ^[a-z0-9-]+$ ]] || refuse "profile must be a plain name like 'documents'"
+  grep -qE "^[[:space:]]*\"$PROFILE\"[[:space:]]*:" tilt/Tiltfile 2>/dev/null \
+    || refuse "unknown Tilt profile '$PROFILE' (see PROFILES in tilt/Tiltfile)"
+else
+  SERVICES="$(printf '%s' "$SERVICES" | tr ',' ' ' | xargs)"
+  [ -n "$SERVICES" ] || refuse "--services is empty"
+  for svc in $SERVICES; do
+    [[ "$svc" =~ ^[a-z0-9-]+$ ]] || refuse "service names are plain names like 'api-gateway'"
+    grep -qF "\"$svc\"" tilt/Tiltfile 2>/dev/null \
+      || refuse "unknown Tilt service '$svc' (see SERVICES in tilt/Tiltfile)"
+  done
+fi
 
 COMMIT_FULL="$(git rev-parse --verify --quiet "${COMMIT}^{commit}")" || refuse "unknown commit: $COMMIT"
 BASE_FULL="$(git rev-parse --verify --quiet "${BASE}^{commit}")" || refuse "unknown base commit: $BASE"
@@ -176,7 +191,7 @@ path, status = sys.argv[1], sys.argv[2]
 try:
     d = json.load(open(path))
 except (OSError, ValueError):
-    d = {"job_id": "$JOB", "base": "$BASE_FULL", "commit": "$COMMIT_FULL", "profile": "$PROFILE",
+    d = {"job_id": "$JOB", "base": "$BASE_FULL", "commit": "$COMMIT_FULL", "profile": "$PROFILE", "services": "$SERVICES".split(),
          "host": "${ZORA_QA_HOST:-}", "remote_dir": "${ZORA_QA_REMOTE_HOME:-}/jobs/$JOB",
          "harness": "$HARNESS_SHA",
          "requested_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
@@ -191,7 +206,7 @@ if [ "$DRY" = 1 ]; then
   write_dispatch dry-run
   echo "DRY RUN    preflight passed; nothing was sent"
   echo "  job        $JOB"
-  echo "  commit     $COMMIT_FULL   base $BASE_FULL   profile $PROFILE"
+  echo "  commit     $COMMIT_FULL   base $BASE_FULL   ${PROFILE:+profile $PROFILE}${SERVICES:+services $SERVICES}"
   echo "  host       ${ZORA_QA_HOST:-(not configured)}   remote ${ZORA_QA_REMOTE_HOME:-(not configured)}/jobs/$JOB"
   echo "  results    $JOBDIR"
   exit 0
@@ -207,13 +222,14 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 "$ZORA_
 REMOTE_JOB="$ZORA_QA_REMOTE_HOME/jobs/$JOB"
 "${SSH[@]}" true 2>/dev/null || failed "cannot reach $ZORA_QA_HOST over ssh"
 
+if [ -n "$SERVICES" ]; then SELECTION="--services '$SERVICES'"; else SELECTION="--profile '$PROFILE'"; fi
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp "$HERE/qa-job.sh" "$HERE/codex-qa-prompt.md" "$HERE/verdict.schema.json" "$HERE/seed-baseline.cjs" "$STAGE/"
+cp "$HERE/qa-job.sh" "$HERE/codex-qa-prompt.md" "$HERE/verdict.schema.json" "$HERE/seed-baseline.cjs" "$HERE/qa-browser.cjs" "$HERE/redact-evidence.py" "$STAGE/"
 cp "$CHARTER" "$STAGE/qa-charter.md"
 COPYFILE_DISABLE=1 tar -czf - -C "$STAGE" . | "${SSH[@]}" "mkdir -p '$REMOTE_JOB/in' && tar -xzf - -C '$REMOTE_JOB/in'" \
   || failed "could not upload the job bundle"
-"${SSH[@]}" "cd '$REMOTE_JOB' || exit 1; setsid nohup bash in/qa-job.sh --job '$JOB' --dir '$REMOTE_JOB' --repo '$REPO_URL' --base '$BASE_FULL' --commit '$COMMIT_FULL' --profile '$PROFILE' > job.log 2>&1 < /dev/null & echo started" >/dev/null \
+"${SSH[@]}" "cd '$REMOTE_JOB' || exit 1; setsid nohup bash in/qa-job.sh --job '$JOB' --dir '$REMOTE_JOB' --repo '$REPO_URL' --base '$BASE_FULL' --commit '$COMMIT_FULL' $SELECTION > job.log 2>&1 < /dev/null & echo started" >/dev/null \
   || failed "could not start the job on the VM"
 echo "STARTED    job $JOB on $ZORA_QA_HOST"
 

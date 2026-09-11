@@ -131,7 +131,7 @@ it; `run-codex-qa` is the only interface. Setup: `~/.claude/skills/zora-cycle/qa
 
 2. **Write a clean charter.** Copy `~/.claude/skills/zora-cycle/qa/charter.template.md` to
    `$RUN/qa-charter.md` and fill it: both commits, the task and acceptance criteria from
-   `task.md`, the Tilt profile, the relevant services and seeded test accounts, and which
+   `task.md`, the Tilt profile or service list, the relevant services and seeded test accounts, and which
    rungs are required. **Leave out** the implementer's reasoning, any claim that the
    feature already works, and any excuse for a known limitation. The dispatcher refuses a
    charter with missing sections, unfilled markers or narrative.
@@ -141,8 +141,13 @@ it; `run-codex-qa` is the only interface. Setup: `~/.claude/skills/zora-cycle/qa
 
    ```bash
    ~/.claude/skills/zora-cycle/qa/run-codex-qa \
-     --run "$RUN" --base "$BASE_SHA" --commit "$HEAD_SHA" --profile <tilt-profile>
+     --run "$RUN" --base "$BASE_SHA" --commit "$HEAD_SHA" \
+     --services "<svc> <svc> ..."    # or: --profile <tilt-profile>
    ```
+
+   Prefer `--services` with only what the change needs; the Tiltfile adds the
+   infrastructure those services use. A named profile starts everything in it, and any
+   unrelated service that fails to start turns the run INCOMPLETE.
 
    It refuses before sending anything if HEAD is not that commit, the tree is dirty, the
    commit is not on origin, or the charter is not clean. It prints the job folder,

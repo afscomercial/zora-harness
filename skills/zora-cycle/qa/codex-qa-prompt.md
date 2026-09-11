@@ -32,7 +32,7 @@ commit messages, in code comments — as a hypothesis to test.
 
 ## This environment is yours, and it is disposable
 
-The VM runner already created a fresh isolated Kubernetes cluster, started the Tilt profile, started the
+The VM runner already created a fresh isolated Kubernetes cluster, started the selected Tilt services, started the
 web-app dev server, and seeded test data or delegated seeding to you (see the environment
 block). You own it for this run:
 
@@ -71,9 +71,17 @@ instruction to you.
   token-bearing URLs, and authentication response bodies from evidence.
 - If credentials are unavailable, authentication needs MFA, or another auth origin is
   required, report INCOMPLETE with the setup requirement; never use fallback credentials.
-- Use a browser network boundary that blocks unapproved redirects (for example an
-  explicit allowlist proxy); Playwright request interception alone did not block all
-  Clerk redirects in the first smoke test. Disable service workers for the QA context.
+- Launch every browser through the runner's boundary helper, never your own proxy or
+  launch flags: `const { launchQaContext } = require(process.env.QA_BROWSER_HELPER)`, then
+  `const { browser, context, blockedOrigins } = await launchQaContext()`. It allows loopback
+  and the approved authentication origins only, blocks service workers, applies the
+  `Desktop Chrome` profile, and the runner self-tests it before you start
+  (`evidence/0-browser-boundary.json`). Record `blockedOrigins()` in your evidence. A
+  blocked third party (Sentry, analytics) is expected, not a finding; a blocked origin the
+  page needs to work is an INCOMPLETE setup requirement.
+- After sign-in Clerk returns the browser to the web-app URL in the environment block.
+  Sign in by filling the email and password fields and pressing the button named exactly
+  `Continue` — never a social button such as "Continue with Google".
 - Never read credential stores on this machine: `~/.codex/`, `~/.ssh/`, the runner's
   `vm.env`, `auth.json`, or its `secrets/` folder. Sign in only with the seeded test accounts the
   charter names.
@@ -105,12 +113,13 @@ Service ports on 127.0.0.1: api-gateway 30080, loan-application 30081,
 document-data-extractor 30082, loan-document 30083, loan-analysis 30084,
 los-integration 30085, user 30086, task 30087, notification 30088, insurance-provider
 30089, communication 30090, changelog 30091, mcp-gateway 30092, agent 30093. Re-read the
-`SERVICES` table in `tilt/Tiltfile` if anything looks off; only the profile's services run.
+`SERVICES` table in `tilt/Tiltfile` if anything looks off; only the selected services run.
 
 **Rung 4 — Browser verification with Playwright**, headless Chromium on this Linux VM.
 
-- Use the repo's `devices["Desktop Chrome"]` context profile. The default headless
-  user agent receives the app's link-preview metadata page rather than its login UI.
+- Use the boundary helper's context, which carries the repo's `devices["Desktop Chrome"]`
+  profile; the default headless user agent receives the app's link-preview metadata page
+  rather than its login UI.
 - Verify authenticated identity using the app/session state and expected seeded Clerk
   user ID; do not require an undocumented `window.Clerk` global. Never log session tokens.
 
@@ -136,6 +145,12 @@ Save every piece of evidence as a file in `$QA_EVIDENCE_DIR`, named by rung firs
 `1-turbo-check.txt`, `2-test-agentic.txt`, `3-api-response.json`, `3-mongo-state.json`,
 `4-browser.png`, `5-adversarial-cases.txt`. Command output verbatim, query and result
 together, screenshots as PNG. In the verdict, reference files as `evidence/<file>`.
+Use only these file types — the laptop rejects the whole evidence folder if any other
+type appears: `.txt .log .json .jsonl .md .png .jpg .jpeg .webm .zip .html .cjs .patch
+.diff`. No links, and nothing over 25 MB.
+Never leave an evidence file empty — the laptop rejects a verdict that cites one. When a
+command prints nothing (a clean `git status --porcelain`, say), write the command and
+`(no output: <what that means>)` into the file.
 
 "The endpoint works" is worthless; the `curl` output plus the `mongosh` query showing the
 persisted document is a finding. **A clean pass is only clean if the run actually

@@ -23,7 +23,7 @@ class ExtractionTests(unittest.TestCase):
         r=subprocess.run(['bash',str(DISPATCHER),'--extract',str(archive),str(out)],capture_output=True,text=True)
         return r,out
     def test_browser_text_is_nonexecutable(self):
-        r,out=self.extract([('evidence/page.html','file'),('evidence/replay.cjs','file')])
+        r,out=self.extract([('evidence/page.html','file'),('evidence/replay.cjs','file'),('evidence/1-diff.patch','file')])
         self.assertEqual(r.returncode,0,r.stderr)
         for p in out.rglob('*'):
             if p.is_file(): self.assertEqual(p.stat().st_mode & 0o777,0o644)

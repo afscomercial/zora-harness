@@ -35,6 +35,9 @@ async function upsert(collection, key, fields) {
       {underwritingGuidelineId:'9b4c1e5d-0000-4000-8000-fnmasellinggde',attributes:{name:'FNMA Selling Guide'}});
     const user=await users.collection('users').findOne({clerkUserId:identity.user.clerkUserId});
     if (user.userId !== identity.user.userId || user.tenantId !== identity.tenant.tenantId) throw Error('Seed verification failed');
+    for (const field of ['firstName', 'lastName', 'role', 'status'])
+      if (identity.user.attributes?.[field] !== undefined && user.attributes?.[field] !== identity.user.attributes[field])
+        throw Error(`Seed verification failed: user ${field} does not match the identity file`);
     console.log(`Seed verified: QA user, matching Clerk tenant, ${identity.systemUsers.length} system user(s), FNMA Selling Guide.`);
   } finally { await client.close(); }
 })().catch(e=>{console.error(e.message);process.exitCode=1});

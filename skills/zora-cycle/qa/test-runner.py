@@ -93,5 +93,37 @@ esac''')
         self.assertIn(str(self.job/'kubeconfig'),calls.read_text())
         self.assertIn('zora-qa-regression',calls.read_text())
 
+    def run_with(self, args, body):
+        return subprocess.run(['bash','-c','source "$1" "${@:2}"\n'+body,
+                               'test',str(self.functions),*args], env=self.env,
+                               capture_output=True, text=True)
+    def mock_tilt(self):
+        calls=self.root/'tilt-call'
+        self.tool('tilt', f'''printf "%s\\n" "$@" > "{calls}"
+if [ -n "${{TILT_PROFILE+x}}" ]; then echo "set:$TILT_PROFILE" > "{calls}.env"; else echo unset > "{calls}.env"; fi''')
+        (self.job/'work').mkdir(exist_ok=True)
+        return calls
+    def test_service_list_reaches_tilt_without_a_profile(self):
+        calls=self.mock_tilt()
+        args=['--job','regression','--dir',str(self.job),'--repo','unused','--base','abc',
+              '--commit','abc','--services','api-gateway user loan-application task']
+        result=self.run_with(args,'start_tilt; wait')
+        self.assertEqual(result.returncode,0,result.stderr)
+        argv=calls.read_text().split()
+        self.assertIn('--',argv)
+        self.assertEqual(argv[argv.index('--')+1:],['api-gateway','user','loan-application','task'])
+        self.assertEqual((self.root/'tilt-call.env').read_text().strip(),'unset')
+    def test_profile_reaches_tilt_as_environment(self):
+        calls=self.mock_tilt()
+        result=self.run_functions('start_tilt; wait')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('--',calls.read_text().split())
+        self.assertEqual((self.root/'tilt-call.env').read_text().strip(),'set:infrastructure')
+    def test_runner_requires_a_profile_or_services(self):
+        args=['--job','regression','--dir',str(self.job),'--repo','unused','--base','abc','--commit','abc']
+        result=subprocess.run(['bash',str(RUNNER),*args],env=self.env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,2)
+        self.assertIn('need --profile or --services',result.stderr)
+
 if __name__ == '__main__':
     unittest.main()

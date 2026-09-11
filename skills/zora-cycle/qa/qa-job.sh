@@ -2,7 +2,8 @@
 # qa-job.sh — runs ON THE QA VM, one job at a time. run-codex-qa uploads a fresh copy with
 # every job, so the VM always runs the harness version that dispatched it.
 #
-#   qa-job.sh --job <id> --dir <job-dir> --repo <url> --base <sha> --commit <sha> --profile <p>
+#   qa-job.sh --job <id> --dir <job-dir> --repo <url> --base <sha> --commit <sha>
+#             (--profile <p> | --services "<svc> <svc> ...")
 #
 # Stages, written to <job-dir>/status: preparing -> validating -> packaging -> done | failed.
 # "failed" means the environment or the runner broke before Codex could run. Results are
@@ -16,21 +17,24 @@
 #                            repo's seed-local-db skill
 #   cache/zora-pantheon.git  bare mirror, refreshed every job
 set -uo pipefail
-RUNNER_VERSION=2
+RUNNER_VERSION=3
 
-JOB="" DIR="" REPO="" BASE="" COMMIT="" PROFILE=""
+JOB="" DIR="" REPO="" BASE="" COMMIT="" PROFILE="" SERVICES=""
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || { echo "missing value for $1" >&2; exit 2; }
   case "$1" in
     --job) JOB="$2" ;; --dir) DIR="$2" ;; --repo) REPO="$2" ;;
     --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;;
+    --services) SERVICES="$2" ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift 2
 done
-for v in JOB DIR REPO BASE COMMIT PROFILE; do
+for v in JOB DIR REPO BASE COMMIT; do
   [ -n "${!v}" ] || { echo "missing --${v,,}" >&2; exit 2; }
 done
+if [ -z "$PROFILE$SERVICES" ]; then echo "need --profile or --services" >&2; exit 2; fi
+if [[ ! "$SERVICES" =~ ^[a-z0-9\ -]*$ ]]; then echo "--services takes plain names only" >&2; exit 2; fi
 
 IN="$DIR/in"; OUT="$DIR/out"; EVID="$OUT/evidence"; WORK="$DIR/work"; SCRATCH="$DIR/scratch"
 QA_HOME="$(cd "$DIR/../.." && pwd)"
@@ -50,11 +54,21 @@ QA_STOP_SERVICES="${QA_STOP_SERVICES:-${QA_PAUSE_SERVICES:-}}"
 QA_NODE_IMAGE="${QA_NODE_IMAGE:-kindest/node:v1.35.0}"
 export TILT_PORT="${TILT_PORT:-10350}"
 export KUBECONFIG="$DIR/kubeconfig"
+# Tilt selection, in the Tiltfile's own priority: a service list wins over a profile.
+# With a list, TILT_PROFILE must be unset, because an empty value fails the Tiltfile check.
+if [ -n "$SERVICES" ]; then
+  read -r -a TILT_ARGS <<< "-- $SERVICES"; TILT_ENV=(env -u TILT_PROFILE)
+else
+  TILT_ARGS=(); TILT_ENV=(env TILT_PROFILE="$PROFILE")
+fi
 CLUSTER_STARTED=false; TILT_STARTED=false
 K3D_REGISTRY="${K3D_REGISTRY:-zora-qa-registry}"
 K3D_REGISTRY_PORT="${K3D_REGISTRY_PORT:-5050}"
 TILT_READY_TIMEOUT="${TILT_READY_TIMEOUT:-2400}"
-WEB_APP_URL="http://127.0.0.1:5173/"
+# The browser uses localhost: Clerk returns there after sign-in (CLERK_AUTHORIZED_PARTIES),
+# so one host keeps the session cookies together. The dev server binds 127.0.0.1 only.
+WEB_APP_URL="http://localhost:5173/"
+WEB_APP_PROBE="http://127.0.0.1:5173/"
 API_URL="http://127.0.0.1:30080"
 MONGO_URI="mongodb://127.0.0.1:27017"
 
@@ -143,8 +157,16 @@ KIND
   esac
 }
 
+start_tilt() {
+  ( cd "$WORK" && exec setsid "${TILT_ENV[@]}" tilt up -f tilt/Tiltfile \
+      --context "$QA_CONTEXT" --host 127.0.0.1 --port "$TILT_PORT" --stream "${TILT_ARGS[@]}" ) \
+      > "$EVID/0-tilt.log" 2>&1 < /dev/null &
+  echo $! > "$DIR/tilt.pid"
+  TILT_STARTED=true
+}
+
 prepare() {
-  log "job $JOB: commit $COMMIT, base $BASE, profile $PROFILE, runner v$RUNNER_VERSION, $CODEX_VERSION"
+  log "job $JOB: commit $COMMIT, base $BASE, profile ${PROFILE:-none}, services ${SERVICES:-none}, runner v$RUNNER_VERSION, $CODEX_VERSION"
   local mirror="$QA_HOME/cache/zora-pantheon.git"
   command -v "$CODEX_BIN" >/dev/null || { env_fail "Codex CLI is missing"; return 1; }
   "$CODEX_BIN" login status > "$EVID/0-codex-login.txt" 2>&1 \
@@ -183,6 +205,12 @@ prepare() {
         || { env_fail "could not place secrets/$rel"; return 1; }
     done < <(find "$QA_HOME/secrets" -type f -print0)
     log "placed sandbox runtime files from secrets/"
+    # The web-app's entity cache is a shared Upstash instance. QA must neither read nor
+    # write it; without these keys the app runs uncached.
+    if [ -f "$WORK/apps/web-app/.env" ] && grep -qE '^KV_REST_API_(URL|TOKEN)=' "$WORK/apps/web-app/.env"; then
+      sed -i -E '/^KV_REST_API_(URL|TOKEN)=/d' "$WORK/apps/web-app/.env"
+      log "disabled the shared web-app entity cache for this job"
+    fi
   else
     log "no secrets/ folder: services start without their runtime .env files"
   fi
@@ -212,11 +240,7 @@ prepare() {
   fi
   chmod 700 "$DIR/bin/"*
   export PATH="$DIR/bin:$PATH"
-  ( cd "$WORK" && exec setsid env TILT_PROFILE="$PROFILE" tilt up -f tilt/Tiltfile \
-      --context "$QA_CONTEXT" --host 127.0.0.1 --port "$TILT_PORT" --stream ) \
-      > "$EVID/0-tilt.log" 2>&1 < /dev/null &
-  echo $! > "$DIR/tilt.pid"
-  TILT_STARTED=true
+  start_tilt
   python3 - "$TILT_READY_TIMEOUT" "$EVID/0-tilt-resources.json" >> "$EVID/0-runner.log" 2>&1 <<'PY' \
     || { env_fail "Tilt resources did not become ready (evidence/0-tilt-resources.json, evidence/0-tilt.log)"; return 1; }
 import json, os, subprocess, sys, time
@@ -265,11 +289,17 @@ PY
   local i
   for i in $(seq 1 60); do
     kill -0 "$(cat "$DIR/webapp.pid")" 2>/dev/null || break
-    if curl --max-time 10 -fsS -o /dev/null "$WEB_APP_URL"; then WEB_APP_READY=true; break; fi
+    if curl --max-time 10 -fsS -o /dev/null "$WEB_APP_PROBE"; then WEB_APP_READY=true; break; fi
     sleep 3
   done
-  if $WEB_APP_READY; then log "web-app ready at $WEB_APP_URL"
-  else log "web-app did not answer at $WEB_APP_URL (evidence/0-web-app.log); Codex reports it on rung 4"; fi
+  if $WEB_APP_READY; then log "web-app ready at $WEB_APP_PROBE (browser uses $WEB_APP_URL)"
+  else log "web-app did not answer at $WEB_APP_PROBE (evidence/0-web-app.log); Codex reports it on rung 4"; fi
+
+  # Codex browses only through this boundary; prove it blocks before trusting it.
+  QA_WORK="$WORK" QA_AUTH_ORIGINS="${QA_AUTH_ORIGINS:-}" node "$IN/qa-browser.cjs" --self-test \
+      > "$EVID/0-browser-boundary.json" 2>&1 \
+    || { env_fail "browser network boundary self-test failed (evidence/0-browser-boundary.json)"; return 1; }
+  log "browser network boundary holds"
 
   if [ -x "$QA_HOME/hooks/seed.sh" ]; then
     QA_WORK="$WORK" QA_MONGO_URI="$MONGO_URI" "$QA_HOME/hooks/seed.sh" > "$EVID/0-seed.txt" 2>&1 \
@@ -298,6 +328,7 @@ run_codex() {
     fi
   fi
   export QA_AUTH_ORIGINS="${QA_AUTH_ORIGINS:-}"
+  export QA_BROWSER_HELPER="$IN/qa-browser.cjs" QA_WORK="$WORK"
 
   HEAD_BEFORE="$(git -C "$WORK" rev-parse HEAD)"
   [ -z "$(git -C "$WORK" status --porcelain --untracked-files=no)" ] && CLEAN_BEFORE=true
@@ -307,12 +338,17 @@ run_codex() {
     printf '\n\n---\n\n## Environment (filled by the VM runner)\n\n'
     printf -- '- Checkout (detached HEAD; never edit it): `%s`\n' "$WORK"
     printf -- '- Base commit: `%s`\n- Feature commit: `%s`\n' "$BASE" "$COMMIT"
-    printf -- '- Tilt profile: `%s` on Kubernetes context `%s`\n' "$PROFILE" "$QA_CONTEXT"
+    if [ -n "$SERVICES" ]; then
+      printf -- '- Tilt services (infrastructure derived automatically): `%s` on Kubernetes context `%s`\n' "$SERVICES" "$QA_CONTEXT"
+    else
+      printf -- '- Tilt profile: `%s` on Kubernetes context `%s`\n' "$PROFILE" "$QA_CONTEXT"
+    fi
     printf -- '- api-gateway: %s\n' "$API_URL"
     printf -- '- MongoDB: %s (Tilt port-forward)\n' "$MONGO_URI"
     printf -- '- web-app: %s (answered at startup: %s)\n' "$WEB_APP_URL" "$WEB_APP_READY"
     printf -- '- Clerk credentials available via CLERK_TEST_EMAIL / CLERK_TEST_PASSWORD: %s (never print values)\n' "$QA_AUTH_AVAILABLE"
     printf -- '- Approved authentication origins (exact origins only): %s\n' "${QA_AUTH_ORIGINS:-none}"
+    printf -- '- Browser boundary helper ($QA_BROWSER_HELPER): `%s` (self-test: evidence/0-browser-boundary.json)\n' "$IN/qa-browser.cjs"
     printf -- '- Test data seeded by: %s\n' "$SEEDED"
     printf -- '- Evidence directory ($QA_EVIDENCE_DIR): `%s`\n' "$EVID"
     printf -- '- Scratch directory ($QA_SCRATCH): `%s`\n' "$SCRATCH"
@@ -345,7 +381,7 @@ finalize() {
   if $LOCKED; then  # never tear down an environment another job owns
     stop_group "$DIR/webapp.pid"
     if $TILT_STARTED; then
-      ( cd "$WORK" && timeout 180 tilt down -f tilt/Tiltfile --context "$QA_CONTEXT" ) >> "$EVID/0-runner.log" 2>&1
+      ( cd "$WORK" && timeout 180 "${TILT_ENV[@]}" tilt down -f tilt/Tiltfile --context "$QA_CONTEXT" "${TILT_ARGS[@]}" ) >> "$EVID/0-runner.log" 2>&1
       stop_group "$DIR/tilt.pid"
     fi
     if $CLUSTER_STARTED && [ "${QA_KEEP_CLUSTER:-0}" != 1 ]; then
@@ -358,9 +394,12 @@ finalize() {
   fi
   cp "$DIR/job.log" "$EVID/0-job.log" 2>/dev/null
   find "$OUT" -type l -delete
+  # Tilt echoes build args and pod env values; scrub every known secret before hashing.
+  python3 "$IN/redact-evidence.py" "$OUT" "$QA_HOME" >> "$DIR/job.log" 2>&1 \
+    || log "evidence redaction failed; the result may contain secrets"
 
   M_RUNNER_VERSION="$RUNNER_VERSION" M_JOB="$JOB" M_REPO="$REPO" M_BASE="$BASE" M_COMMIT="$COMMIT" \
-  M_PROFILE="$PROFILE" M_STARTED_AT="$STARTED_AT" M_HEAD_BEFORE="$HEAD_BEFORE" \
+  M_PROFILE="$PROFILE" M_SERVICES="$SERVICES" M_STARTED_AT="$STARTED_AT" M_HEAD_BEFORE="$HEAD_BEFORE" \
   M_CLEAN_BEFORE="$CLEAN_BEFORE" M_HEAD_AFTER="$HEAD_AFTER" M_ENV_READY="$ENV_READY" \
   M_ENV_REASON="$ENV_REASON" M_WEB_APP_READY="$WEB_APP_READY" M_SEEDED="$SEEDED" \
   M_CLUSTER="$QA_CONTEXT" M_CODEX_RAN="$CODEX_RAN" M_CODEX_EXIT="$CODEX_EXIT" \
@@ -391,7 +430,8 @@ manifest = {
     "repo": re.sub(r"//[^@/]+@", "//", e["M_REPO"]),
     "base": e["M_BASE"],
     "commit": e["M_COMMIT"],
-    "profile": e["M_PROFILE"],
+    "profile": e["M_PROFILE"] or None,
+    "services": e.get("M_SERVICES", "").split() or None,
     "started_at": e["M_STARTED_AT"],
     "finished_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "checkout": {
