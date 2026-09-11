@@ -54,8 +54,8 @@ end, on this machine only.
 ### Remote QA — `skills/zora-cycle/qa/`
 
 Validation runs as a remote job on a dedicated VM: the lead freezes and pushes a commit,
-writes a charter, and `run-codex-qa` sends it over SSH. The VM builds a disposable k3d +
-Tilt copy of the local environment and runs Codex (`gpt-6-astra`) through the validation
+writes a charter, and `run-codex-qa` sends it over SSH. The VM builds a disposable Kind (or
+k3d) + Tilt copy of the local environment and runs Codex (`gpt-6-astra`) through the validation
 ladder; the verdict and evidence come back as files for `verdict-check.sh --remote` and
 the lead's judgment. Setup and the security model: `skills/zora-cycle/qa/README.md`.
 

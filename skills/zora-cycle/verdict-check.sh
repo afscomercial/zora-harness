@@ -78,6 +78,9 @@ def environment_problems():
     if env.get("ready") is not True:
         probs.append(f"INCOMPLETE (QA environment): {env.get('reason') or 'it never became ready'}. "
                      "Repair the VM and rerun the same commit; never send this to the implementer")
+    elif cx.get("ran") is not True:
+        probs.append(f"INCOMPLETE (runner): Codex never started: {env.get('reason') or 'no reason recorded'}. "
+                     "Repair the VM and rerun the same commit")
     elif cx.get("exit_code") != 0:
         probs.append(f"INCOMPLETE (Codex run): exited with {cx.get('exit_code')!r}. Rerun the same commit")
     return probs

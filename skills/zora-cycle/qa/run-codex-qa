@@ -38,7 +38,7 @@ safe_extract() {
 import os, sys, tarfile
 src, dest = sys.argv[1], sys.argv[2]
 ALLOWED_TOP = {"verdict.json", "remote-manifest.json", "codex-events.jsonl"}
-ALLOWED_EXT = {".txt", ".log", ".json", ".jsonl", ".md", ".png", ".jpg", ".jpeg", ".webm", ".zip"}
+ALLOWED_EXT = {".txt", ".log", ".json", ".jsonl", ".md", ".png", ".jpg", ".jpeg", ".webm", ".zip", ".html", ".cjs"}
 MAX_FILE, MAX_TOTAL, MAX_FILES = 25 << 20, 400 << 20, 2000
 problems, plan, total = [], [], 0
 try:
@@ -209,11 +209,11 @@ REMOTE_JOB="$ZORA_QA_REMOTE_HOME/jobs/$JOB"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp "$HERE/qa-job.sh" "$HERE/codex-qa-prompt.md" "$HERE/verdict.schema.json" "$STAGE/"
+cp "$HERE/qa-job.sh" "$HERE/codex-qa-prompt.md" "$HERE/verdict.schema.json" "$HERE/seed-baseline.cjs" "$STAGE/"
 cp "$CHARTER" "$STAGE/qa-charter.md"
-tar -czf - -C "$STAGE" . | "${SSH[@]}" "mkdir -p '$REMOTE_JOB/in' && tar -xzf - -C '$REMOTE_JOB/in'" \
+COPYFILE_DISABLE=1 tar -czf - -C "$STAGE" . | "${SSH[@]}" "mkdir -p '$REMOTE_JOB/in' && tar -xzf - -C '$REMOTE_JOB/in'" \
   || failed "could not upload the job bundle"
-"${SSH[@]}" "cd '$REMOTE_JOB' && setsid nohup bash in/qa-job.sh --job '$JOB' --dir '$REMOTE_JOB' --repo '$REPO_URL' --base '$BASE_FULL' --commit '$COMMIT_FULL' --profile '$PROFILE' > job.log 2>&1 < /dev/null & echo started" >/dev/null \
+"${SSH[@]}" "cd '$REMOTE_JOB' || exit 1; setsid nohup bash in/qa-job.sh --job '$JOB' --dir '$REMOTE_JOB' --repo '$REPO_URL' --base '$BASE_FULL' --commit '$COMMIT_FULL' --profile '$PROFILE' > job.log 2>&1 < /dev/null & echo started" >/dev/null \
   || failed "could not start the job on the VM"
 echo "STARTED    job $JOB on $ZORA_QA_HOST"
 

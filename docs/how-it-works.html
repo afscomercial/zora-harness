@@ -346,14 +346,14 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
     </div>
 
     <h3 id="qavm">QA on an isolated VM</h3>
-    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh k3d cluster with the Tilt profile, seeds clean data, and runs Codex (<code>gpt-6-astra</code>) through the whole ladder.</p>
+    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh Kind (or k3d) cluster with the Tilt profile, seeds clean data, and runs Codex (<code>gpt-6-astra</code>) through the whole ladder.</p>
     <div class="scroller">
       <table>
         <thead><tr><th>Step</th><th>Where</th><th>What happens</th></tr></thead>
         <tbody>
           <tr><td>Freeze</td><td>laptop</td><td>Clean tree, commit pushed to origin, base and feature SHAs recorded</td></tr>
           <tr><td>Charter</td><td>laptop</td><td>Facts only; the dispatcher refuses missing sections, unfilled markers or narrative</td></tr>
-          <tr><td>Build</td><td>VM</td><td>Disposable clone in detached HEAD, fresh k3d cluster, Tilt profile, web-app, seeded data</td></tr>
+          <tr><td>Build</td><td>VM</td><td>Disposable clone in detached HEAD, fresh Kind (or k3d) cluster, Tilt profile, web-app, seeded data</td></tr>
           <tr><td>Validate</td><td>VM</td><td>Codex climbs all five rungs; it may restart a crashed service only if it records the restart</td></tr>
           <tr><td>Return</td><td>VM &rarr; laptop</td><td><code>verdict.json</code>, a manifest with checksums, the event log and <code>evidence/</code>, safely extracted into <code>$RUN/qa/&lt;job-id&gt;/</code></td></tr>
           <tr><td>Judge</td><td>laptop</td><td><code>verdict-check.sh --remote</code>, then the lead reads the evidence as untrusted data and decides</td></tr>

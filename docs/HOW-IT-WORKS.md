@@ -116,8 +116,8 @@ review). Overkill for a three-step chain.
 Validation normally runs as a remote job. The lead freezes the commit, pushes it, and
 writes a QA charter — commits, task, acceptance criteria, Tilt profile, services, test
 accounts, required rungs, and nothing about how the change was built. `run-codex-qa`
-sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh k3d
-cluster with the Tilt profile, seeds clean data, and runs Codex (`gpt-6-astra`) through
+sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh Kind
+(or k3d) cluster with the Tilt profile, seeds clean data, and runs Codex (`gpt-6-astra`) through
 the whole ladder. The verdict, a manifest with checksums, Codex's event log and the
 evidence come back as files. Codex is never a Claude Code subagent; the dispatcher is
 the only interface. When the VM is unavailable, the local Fable `zora-validator` takes
