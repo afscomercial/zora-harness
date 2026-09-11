@@ -42,7 +42,7 @@ override the frontmatter too).
 
 | Skill | Purpose |
 |---|---|
-| `zora-cycle` | The pipeline. Plan → approve → implement → gates → validate → judge → PR. Keeps its state in `~/.zora-harness/runs/`; a PASS must survive `verdict-check.sh`. Never merges. |
+| `zora-cycle` | The pipeline. Plan → approve → implement → gates → validate → judge → PR. Keeps its state in `runs/` (gitignored); a PASS must survive `verdict-check.sh`. Never merges. |
 | `agent-browser` | End-to-end verification against the live Tilt cluster, service APIs, MongoDB, and the local web-app in a browser. |
 | `agent-review` | The review loop: review once, refute each significant finding before acting, triage, at most two fix rounds. |
 | `ask-slack-review` | Drafts a short, reader-facing peer-review request. |
@@ -83,9 +83,10 @@ an older commit, predates uncommitted changes, skipped the gates or tests, or cl
 a rung with no evidence file behind it. What it cannot check is whether the evidence
 is honest, so the lead still reads it.
 
-**Why runs live in `~/.zora-harness/runs/`.** Outside zora-pantheon, so nothing lands
-in that repo and Tilt never sees a new file; outside this repo, so internal run
-details never reach a public GitHub page.
+**Why runs live in `runs/`, gitignored.** Outside zora-pantheon, so nothing lands in that
+repo and Tilt never sees a new file. Inside this checkout, next to the harness, so they
+are easy to find. Gitignored, because this repo is public and run files hold internal data
+(screenshots, tenant and user ids, logs), so never `git add -f` anything under `runs/`.
 
 **Why subagents rather than agent teams.** Agent teams don't isolate teammates in
 worktrees, and this repo has one shared local environment: the Tilt cluster and dev

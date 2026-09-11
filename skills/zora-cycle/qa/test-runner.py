@@ -124,6 +124,36 @@ if [ -n "${{TILT_PROFILE+x}}" ]; then echo "set:$TILT_PROFILE" > "{calls}.env"; 
         result=subprocess.run(['bash',str(RUNNER),*args],env=self.env,capture_output=True,text=True)
         self.assertEqual(result.returncode,2)
         self.assertIn('need --profile or --services',result.stderr)
+    def test_finalize_removes_the_checkout(self):
+        (self.job/'work'/'apps').mkdir(parents=True)
+        (self.job/'work'/'apps'/'.env').write_text('SECRET=value\n')
+        result=self.run_functions('LOCKED=true\nfinalize')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse((self.job/'work').exists())
+        self.assertFalse((self.job/'scratch').exists())
+        self.assertTrue((self.job/'result.tar.gz').exists())
+    def test_finalize_keeps_the_checkout_when_asked(self):
+        (self.job/'work').mkdir()
+        result=self.run_functions('LOCKED=true\nQA_KEEP_WORK=1\nfinalize')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertTrue((self.job/'work').exists())
+    def test_prune_keeps_recent_jobs_without_checkouts(self):
+        jobs=self.root/'jobs'
+        for i,name in enumerate(['old1','old2','recent1','recent2']):
+            d=jobs/name; (d/'work').mkdir(parents=True); (d/'out').mkdir()
+            os.utime(d,(1000+i,1000+i))
+        (self.job/'work').mkdir()
+        outside=self.root/'not-a-job'; outside.mkdir()
+        # The running job is made the oldest, so only the self-check can save it.
+        result=self.run_functions('QA_KEEP_JOBS=2\ntouch -d @1 "$DIR"\nprune_old_jobs')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse((jobs/'old1').exists())
+        self.assertFalse((jobs/'old2').exists())
+        for name in ('recent1','recent2'):
+            self.assertTrue((jobs/name/'out').exists())
+            self.assertFalse((jobs/name/'work').exists())
+        self.assertTrue((self.job/'work').exists(), 'the running job is never pruned')
+        self.assertTrue(outside.exists())
 
 if __name__ == '__main__':
     unittest.main()

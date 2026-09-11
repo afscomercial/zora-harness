@@ -413,7 +413,7 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
     <p><strong>Absolute paths, always.</strong> A relative path resolves differently &mdash; or not at all &mdash; in an agent&rsquo;s working directory.</p>
 
     <h3 id="ledger">The ledger</h3>
-    <p>Every run keeps its state on disk in <code>~/.zora-harness/runs/&lt;date&gt;-&lt;slug&gt;/</code>, outside both repositories: the task, the approved plan, the ledger, the validator&rsquo;s evidence and its <code>verdict.json</code>. Because the state lives in files rather than in the lead&rsquo;s context, a crash, a compaction or a new session resumes from them. The ledger has two parts: a <strong>standing-directives head</strong> of settled policy kept current, and a <strong>chronological log</strong> of launches with their task ids, the lane&rsquo;s base commit, and verdicts with their evidence.</p>
+    <p>Every run keeps its state on disk in <code>runs/&lt;date&gt;-&lt;slug&gt;/</code> inside the zora-harness checkout, a folder <code>.gitignore</code> keeps out of the public repository: the task, the approved plan, the ledger, the validator&rsquo;s evidence and its <code>verdict.json</code>. Because the state lives in files rather than in the lead&rsquo;s context, a crash, a compaction or a new session resumes from them. The ledger has two parts: a <strong>standing-directives head</strong> of settled policy kept current, and a <strong>chronological log</strong> of launches with their task ids, the lane&rsquo;s base commit, and verdicts with their evidence.</p>
     <p>After a compaction, <strong>reground from the head <em>and</em> the tail</strong>. A tail-only reground lets settled decisions quietly fade, and they return as re-litigated questions or, worse, as reversals nobody noticed.</p>
     <p>A task counts as <strong>launched</strong> only when its id from the tool result is in the ledger. A written charter is not a running agent. When a long effort concludes, externalize the durable record &mdash; decisions, divergences, audit results &mdash; into the PR body; the run folder stays behind as yours.</p>
 
@@ -507,7 +507,7 @@ git status                      <span class="cmt"># clean tree required</span>
 claude
 /zora-cycle &lt;task&gt;</code></pre>
     </div>
-    <p>Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first run, set up the VM and <code>~/.zora-harness/qa.env</code> (see <code>skills/zora-cycle/qa/README.md</code>), then try a dispatch that sends nothing:</p>
+    <p>Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first run, set up the VM and <code>qa.env</code> at the harness root, which is gitignored (see <code>skills/zora-cycle/qa/README.md</code>), then try a dispatch that sends nothing:</p>
     <div class="scroller">
 <pre><code>~/.claude/skills/zora-cycle/qa/run-codex-qa --run "$RUN" --base "$BASE_SHA" \
   --commit "$HEAD_SHA" --profile documents --dry-run</code></pre>

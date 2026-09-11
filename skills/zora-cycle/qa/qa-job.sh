@@ -460,7 +460,31 @@ manifest = {
 json.dump(manifest, open(os.path.join(out, "remote-manifest.json"), "w"), indent=2)
 PY
   tar -czf "$DIR/result.tar.gz" -C "$OUT" .
+  if $LOCKED; then remove_checkout; fi
   if $ENV_READY && $CODEX_RAN; then set_status done; else set_status failed; fi
+}
+
+# The checkout is ~3 GB and carries copies of the runtime .env files, while the evidence
+# is already packaged. A kept cluster still mounts work/tilt/data, so it keeps the checkout.
+remove_checkout() {
+  if [ "${QA_KEEP_WORK:-0}" = 1 ] || [ "${QA_KEEP_CLUSTER:-0}" = 1 ]; then return; fi
+  rm -rf -- "$WORK" "$SCRATCH"
+}
+
+# Under the lock, before building: keep the newest QA_KEEP_JOBS job folders (their
+# evidence only), delete older ones, and trim Docker's dangling images and old build cache.
+prune_old_jobs() {
+  local keep="${QA_KEEP_JOBS:-10}" self n=0 j
+  [[ "$keep" =~ ^[0-9]+$ ]] || keep=10
+  self="$(cd "$DIR" && pwd)"
+  while IFS= read -r j; do
+    [ "$j" = "$self" ] && continue
+    n=$((n + 1))
+    if [ "$n" -gt "$keep" ]; then rm -rf -- "$j"; log "pruned old job $(basename "$j")"
+    else rm -rf -- "$j/work" "$j/scratch"; fi
+  done < <(find "$QA_HOME/jobs" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+  docker image prune -f >> "$EVID/0-runner.log" 2>&1 || true
+  docker builder prune -f --filter until=168h >> "$EVID/0-runner.log" 2>&1 || true
 }
 
 exec 9> "$QA_HOME/.qa.lock"
@@ -470,4 +494,5 @@ trap finalize EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 set_status preparing
+if $LOCKED; then prune_old_jobs; fi
 if $LOCKED && prepare; then run_codex; fi

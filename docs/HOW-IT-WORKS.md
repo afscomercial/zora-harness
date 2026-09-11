@@ -205,9 +205,9 @@ in an agent's working directory.
 
 ### The ledger
 
-Every run keeps its state on disk in `~/.zora-harness/runs/<date>-<slug>/`, outside
-both repositories: the task, the approved plan, the ledger, the validator's evidence
-and its `verdict.json`. Because the state lives in files rather than in the lead's
+Every run keeps its state on disk in `runs/<date>-<slug>/` inside the zora-harness
+checkout, a folder `.gitignore` keeps out of the public repository: the task, the
+approved plan, the ledger, the validator's evidence and its `verdict.json`. Because the state lives in files rather than in the lead's
 context, a crash, a compaction or a brand-new session resumes from them. The ledger
 (`ledger.md`) has two parts:
 
@@ -461,7 +461,8 @@ claude
 ```
 
 Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first
-run, set up the VM and `~/.zora-harness/qa.env` (`skills/zora-cycle/qa/README.md`), then
+run, set up the VM and `qa.env` at the harness root, which is gitignored
+(`skills/zora-cycle/qa/README.md`), then
 try a dispatch that sends nothing:
 
 ```bash

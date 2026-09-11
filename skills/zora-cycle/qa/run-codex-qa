@@ -13,7 +13,8 @@
 # qa/charter.template.md. Results land in <run-dir>/qa/<job-id>/; check them with
 #   verdict-check.sh <run-dir>/qa/<job-id> --remote
 #
-# Config: ~/.zora-harness/qa.env, or the same variables in the environment
+# Config: <zora-harness>/qa.env (gitignored; ~/.zora-harness/qa.env still read as a
+# fallback), a file named by ZORA_QA_CONFIG, or the same variables in the environment
 #   ZORA_QA_HOST         ssh destination for the VM (a ~/.ssh/config alias is best)
 #   ZORA_QA_REMOTE_HOME  QA home on the VM, e.g. /home/zqa/zora-qa
 #   ZORA_QA_REPO         clone URL the VM uses (default: this checkout's origin URL)
@@ -113,7 +114,9 @@ done
 [ -n "$RUN" ] && [ -n "$BASE" ] && [ -n "$COMMIT" ] && [ -n "$PROFILE$SERVICES" ] || usage
 if [ -n "$PROFILE" ] && [ -n "$SERVICES" ]; then echo "choose --profile or --services, not both" >&2; exit 2; fi
 
-CONF="${ZORA_QA_CONFIG:-$HOME/.zora-harness/qa.env}"
+HARNESS="$(cd -P "$HERE/../../.." && pwd)"  # the checkout behind the install symlink
+CONF="${ZORA_QA_CONFIG:-$HARNESS/qa.env}"
+[ -f "$CONF" ] || [ -n "${ZORA_QA_CONFIG:-}" ] || CONF="$HOME/.zora-harness/qa.env"  # former location
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 

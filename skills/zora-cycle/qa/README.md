@@ -94,7 +94,7 @@ Every file under `secrets/` must be gitignored in the repo; the runner refuses t
 one that would overwrite tracked content. **Never copy `tilt/data/`** — it holds your
 local MongoDB data. Each job starts from an empty database and seeds it.
 
-**Laptop config**, `~/.zora-harness/qa.env`:
+**Laptop config**, `<zora-harness>/qa.env` (gitignored):
 
 ```bash
 ZORA_QA_HOST=zora-qa                     # an alias in ~/.ssh/config (key auth, no password)
@@ -151,7 +151,7 @@ Each job creates a unique Kind cluster, a private kubeconfig, and an empty data
 folder mounted at the path expected by the repo's MongoDB volume. It does not
 reuse or delete the usual development cluster or its database.
 
-Example laptop `~/.zora-harness/qa.env`:
+Example laptop `<zora-harness>/qa.env` (gitignored):
 
 ```bash
 ZORA_QA_HOST=root@<vps-address>
@@ -279,3 +279,14 @@ are still reported rather than killed indiscriminately.
 After QA, only the job's cluster/processes are removed. Nothing is restored or
 started between jobs. The old QA_PAUSE_SERVICES setting is accepted as a legacy
 alias for the stop list; it no longer implies restoration.
+
+Disk cleanup:
+- **After each job**, once the result is packaged, the runner deletes that job's checkout
+  (`work/`, about 3 GB, with copies of the runtime `.env` files) and Codex's `scratch/`.
+  Set `QA_KEEP_WORK=1` in `vm.env` to keep them for debugging. `QA_KEEP_CLUSTER=1` also
+  keeps them, because the cluster mounts `work/tilt/data`.
+- **Before each job**, under the lock, it keeps the newest `QA_KEEP_JOBS` job folders
+  (default 10) and deletes older ones. It clears any checkout a crashed job left behind,
+  and removes dangling Docker images and build cache older than 7 days.
+- **What stays on the VM** is `in/`, `out/`, `result.tar.gz` and `job.log`. The laptop
+  keeps its own copy of every result in the run folder, so nothing there is ever pruned.

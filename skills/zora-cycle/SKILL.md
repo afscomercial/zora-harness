@@ -36,10 +36,10 @@ sizing; read it before splitting work.
 
 ## The run folder
 
-Every run keeps its state on disk, outside both repositories:
+Every run keeps its state on disk in the harness checkout's `runs/` folder:
 
 ```
-~/.zora-harness/runs/<YYYY-MM-DD>-<slug>/
+<zora-harness>/runs/<YYYY-MM-DD>-<slug>/
 ├── task.md        the request and acceptance criteria, in the user's words
 ├── plan.md        the approved plan
 ├── ledger.md      standing decisions + chronological log
@@ -51,17 +51,19 @@ Every run keeps its state on disk, outside both repositories:
 └── review.md      agent-review's output, when it runs
 ```
 
-It sits outside zora-pantheon, so nothing ever lands in the repo or trips a Tilt
-rebuild, and outside zora-harness, so internal run details never reach that public
-repository. **The folder is the memory; your context window is scratch paper.** A
-crash, a compaction or a new session resumes from these files.
+It sits outside zora-pantheon, so nothing ever lands in that repo or trips a Tilt
+rebuild, and next to the harness, so it is easy to find. `runs/` is gitignored because
+zora-harness is public and run files hold internal data (screenshots, ids, logs): never
+`git add -f` anything under it. **The folder is the memory; your context window is
+scratch paper.** A crash, a compaction or a new session resumes from these files.
 
 ## The cycle
 
 **0. Open or resume the run folder.**
 
 ```bash
-RUN=~/.zora-harness/runs/<YYYY-MM-DD>-<slug>
+HARNESS="$(cd -P ~/.claude/skills/zora-cycle/../.. && pwd)"  # the checkout behind the install symlink
+RUN="$HARNESS/runs/<YYYY-MM-DD>-<slug>"
 ```
 
 If `$RUN/ledger.md` already exists, this is a continuation: read the ledger's head

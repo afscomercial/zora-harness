@@ -1,3 +1,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+# Run state and QA evidence: internal data (screenshots, ids, logs). Never force-add.
+/runs/
+# Laptop QA config: points at the QA VM. Never force-add.
+/qa.env
