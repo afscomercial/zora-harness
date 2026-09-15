@@ -31,6 +31,18 @@ class Tests(unittest.TestCase):
         w.atomic(self.path/'in/dispatch.json',self.d)
     def tearDown(self):
         self.tmp.cleanup()
+    def test_failure_after_slot_release_is_terminal(self):
+        w.atomic(self.path/'ownership.json', {'slot_id': 1, 'attempt_id': self.path.name})
+        self.worker.failure(self.path,self.d,'interrupted after cleanup')
+        self.assertEqual(self.worker.status(self.path.name),'failed')
+    def test_redaction_receives_vm_and_slot_environment(self):
+        (self.home/'vm.env').write_text('WORKER_TEST_SECRET=private-value\nQA_AUTH_FILE=/wrong/auth\n')
+        w.atomic(self.path/'ownership.json', {'env': {'QA_AUTH_FILE': '/slot/auth'}})
+        (self.path/'out').mkdir()
+        (self.path/'in/redact-evidence.py').write_text('import os; assert os.environ["WORKER_TEST_SECRET"] == "private-value"; assert os.environ["QA_AUTH_FILE"] == "/slot/auth"')
+        self.worker.sanitize(self.path)
+        self.assertFalse(list(self.path.glob('unredacted-out-*')))
+
     def test_under_reserved_profile_rejected(self):
         w.atomic(self.home/'worker.json', {'profiles': {'heavy': 100}})
         with self.assertRaisesRegex(ValueError, 'reservation'): w.Worker(self.home)

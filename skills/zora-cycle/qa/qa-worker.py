@@ -254,6 +254,7 @@ class Worker:
                 self._execute(path, d)
             except Exception as exc:
                 print(f'worker exception: {exc}', flush=True)
+                self.stop_children(unit_name(path.name))
                 self.failure(path, d, str(exc))
                 raise
 
@@ -322,9 +323,11 @@ class Worker:
                         time.sleep(1)
                     result = subprocess.CompletedProcess(launch, process.returncode)
                 except subprocess.TimeoutExpired:
+                    self.stop_children(record['unit'])
                     self.failure(path, d, 'execution deadline exceeded')
                 else:
                     if result.returncode or not (path / 'result.tar.gz').exists():
+                        self.stop_children(record['unit'])
                         self.failure(path, d, f'runner exited {result.returncode} without a complete result')
             self.telemetry(path, record)
         finally:
@@ -337,8 +340,11 @@ class Worker:
         if not helper.exists():
             # Synthetic worker tests have no secret-producing runner.
             return
-        result = subprocess.run([sys.executable, str(helper), str(path / 'out'), str(self.home)],
-                                capture_output=True, text=True, timeout=60)
+        owned_env = read(path / 'ownership.json', {}).get('env', {})
+        launch = ['bash', '-c', 'set -a; [ ! -f "$1" ] || source "$1"; shift; exec env "$@"', 'qa-redact', str(self.home / 'vm.env')]
+        launch += [k + '=' + v for k, v in owned_env.items()]
+        launch += [sys.executable, str(helper), str(path / 'out'), str(self.home)]
+        result = subprocess.run(launch, capture_output=True, text=True, timeout=60)
         if result.returncode:
             quarantine = path / ('unredacted-out-' + str(time.time_ns()))
             (path / 'out').rename(quarantine)
@@ -487,7 +493,10 @@ class Worker:
                     if file.is_file() and not file.is_symlink():
                         archive.add(file, arcname=str(file.relative_to(out)))
             os.replace(path / 'result.tar.gz.tmp', path / 'result.tar.gz')
-        self.set_status(path, 'packaging' if (path / 'ownership.json').exists() else 'failed', reason)
+        owner = read(path / 'ownership.json', {})
+        reservation = read(self.slots / (str(owner.get('slot_id')) + '.json'), {})
+        still_reserved = reservation.get('attempt_id') == path.name
+        self.set_status(path, 'packaging' if still_reserved else 'failed', reason)
 
     def reap(self, release=None):
         # Lock order: never wait for a slot while holding admission. Try slot then admission

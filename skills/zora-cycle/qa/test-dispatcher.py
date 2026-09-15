@@ -127,6 +127,44 @@ class CheckerTests(unittest.TestCase):
         self.m['staging_isolation_supported'] = "true"
         self.assertEqual(self.check().returncode, 1)
 
+    def test_actual_runner_manifest_matches_both_selection_modes(self):
+        source = (HERE / 'qa-job.sh').read_text()
+        anchor = 'python3 - "$OUT" "$DIR/tracked-after.txt" "$IN/dispatch.json"'
+        body = source.split(anchor, 1)[1].split("\n", 1)[1].split("\nPY\n", 1)[0]
+        tracked = self.root / 'tracked-after.txt'
+        tracked.write_text('')
+        for profile, services in [('infra', []), (None, ['api-gateway', 'user'])]:
+            with self.subTest(profile=profile, services=services):
+                self.d.update(profile=profile, services=services)
+                expected = self.root / 'dispatch.json'
+                (self.run / 'dispatch.json').unlink(missing_ok=True)
+                expected.write_text(json.dumps(self.d))
+                env = os.environ | {
+                    'M_RUNNER_VERSION': '4', 'M_JOB': 'attempt', 'M_REPO': self.d['repo'],
+                    'M_BASE': self.sha, 'M_COMMIT': self.sha, 'M_PROFILE': profile or '',
+                    'M_SERVICES': ' '.join(services), 'M_STARTED_AT': '2026-01-01T00:00:00Z',
+                    'M_HEAD_BEFORE': self.sha, 'M_HEAD_AFTER': self.sha, 'M_CLEAN_BEFORE': 'true',
+                    'M_ENV_READY': 'true', 'M_CLUSTER': 'fixture', 'M_SEEDED': 'fixture',
+                    'M_CODEX_RAN': 'true', 'M_CODEX_EXIT': '0', 'M_MODEL': 'fixture', 'M_EFFORT': 'high',
+                    'QA_MANAGED': '1', 'QA_SLOT_ID': '1', 'QA_NET_ISOLATION': 'none',
+                    'ZORA_TILT_STAGING_ROOT': '/tmp/fixture-staging',
+                }
+                subprocess.run(['python3', '-c', body, str(self.run), str(tracked), str(expected)], env=env, check=True)
+                self.m = json.loads((self.run / 'remote-manifest.json').read_text())
+                result = self.check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_historical_inactive_selection_forms_and_invalid_selectors(self):
+        self.m['services'] = None
+        self.assertEqual(self.check().returncode, 0)
+        self.d.update(profile='', services=['user'])
+        self.m.update(profile=None, services=['user'])
+        self.assertEqual(self.check().returncode, 0)
+        self.m['services'] = ['api-gateway']
+        self.assertEqual(self.check().returncode, 1)
+        self.m.update(profile=None, services='user')
+        self.assertEqual(self.check().returncode, 1)
+
     def test_new_manifest_cannot_downgrade(self):
         self.m.pop('protocol_version')
         self.m['runner_version'] = 3

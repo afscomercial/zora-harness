@@ -519,6 +519,8 @@ if e.get("QA_MANAGED") == "1":
     for key in ("protocol_version", "job_id", "attempt_id", "worker_id", "environment_id", "charter_sha256", "bundle_sha256"):
         manifest[key] = dispatch[key]
     manifest["slot_id"] = e["QA_SLOT_ID"]
+    manifest["services"] = e.get("M_SERVICES", "").split()
+    manifest["staging_isolation_supported"] = dispatch.get("staging_isolation_supported", False)
     manifest["environment"].update(slot_id=e["QA_SLOT_ID"], isolation=e["QA_NET_ISOLATION"],
         staging_root=e["ZORA_TILT_STAGING_ROOT"], retained=e.get("QA_KEEP_CLUSTER") == "1",
         health_evidence="evidence/0-nodes-final.json", images_evidence="evidence/0-pods-final.json")

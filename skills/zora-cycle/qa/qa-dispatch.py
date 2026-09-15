@@ -135,7 +135,7 @@ def submit(args):
     d = dict(protocol_version=4, job_id=job, attempt_id=attempt, environment_id=attempt,
              worker_id=worker['id'], host=worker['host'], remote_home=worker['home'],
              remote_dir=worker['home'] + '/jobs/' + attempt, base=args.base,
-             commit=args.commit, repo=args.repo, profile=args.profile,
+             commit=args.commit, repo=args.repo, profile=args.profile or None,
              services=args.services.split(), charter_sha256=hashlib.sha256(files['qa-charter.md']).hexdigest(),
              bundle_sha256=canonical_hash(files), requested_at=time.time(),
              staging_isolation_supported=staging_supported(args.commit))

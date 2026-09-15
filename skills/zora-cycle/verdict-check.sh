@@ -94,9 +94,28 @@ def remote_problems():
         if protocol != 4 or version != 4 or (d or {}).get("protocol_version") != 4:
             probs.append("QA protocol version mismatch; v4 cannot fall back to legacy checks")
         for key in ("job_id", "attempt_id", "worker_id", "environment_id", "charter_sha256",
-                    "bundle_sha256", "profile", "services", "repo"):
+                    "bundle_sha256", "repo"):
             if key not in m or key not in (d or {}) or m.get(key) != (d or {}).get(key):
                 probs.append(f"QA identity mismatch or missing field: {key}")
+        # Early v4 runners represented inactive selectors as null/empty string.
+        # Normalize only those documented empty forms; reject absent fields and bad types.
+        def selection(record):
+            if "profile" not in record or "services" not in record:
+                return None
+            profile, services = record["profile"], record["services"]
+            if profile == "":
+                profile = None
+            if services is None:
+                services = []
+            if ((profile is not None and (not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9-]+", profile)))
+                    or not isinstance(services, list)
+                    or any(not isinstance(s, str) or not re.fullmatch(r"[a-z0-9-]+", s) for s in services)
+                    or bool(profile) == bool(services)):
+                return None
+            return profile, services
+        expected_selection, actual_selection = selection(d or {}), selection(m)
+        if expected_selection is None or actual_selection is None or expected_selection != actual_selection:
+            probs.append("QA identity mismatch or invalid profile/services selection")
         expected_staging = (d or {}).get("staging_isolation_supported", False)
         actual_staging = m.get("staging_isolation_supported", False)
         if (not isinstance(expected_staging, bool) or not isinstance(actual_staging, bool)
