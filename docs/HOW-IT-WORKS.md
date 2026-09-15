@@ -92,10 +92,11 @@ on this machine only.
 **Agent teams** — teammates messaging each other directly, with a shared task list.
 Rejected for three concrete reasons:
 
-1. Teams don't isolate teammates in worktrees, and this repo has **one shared local
-   environment**: the Tilt cluster and dev servers serve the main checkout, which
-   makes the working tree shared state. Two agents committing there sweep each
-   other's half-finished files into unrelated commits.
+1. Teams don't isolate teammates in worktrees. This harness isolates them itself —
+   one lane worktree per feature, one mutating agent per lane — which is the part
+   that actually matters. Two agents committing in **one** tree sweep each other's
+   half-finished files into unrelated commits, and a team gives you no mechanism
+   against that.
 2. Plan → implement → validate is **sequential within each feature**. Separate
    features can have overlapping remote QA attempts; that does not require local
    implementation agents to mutate the same checkout concurrently.
@@ -495,10 +496,15 @@ verdict.**
 
 ```bash
 cd ~/Documents/housenumbers/zora-pantheon
-git status                    # clean tree required
 claude
 /zora-cycle <task>
 ```
+
+The cycle opens a **lane worktree** for the feature (`worktrees/<slug>`, branch
+`feat/<slug>`) and runs every git, turbo and pnpm command there. The main checkout stays
+clean and keeps serving the user's Tilt cluster; `git status` in it is not the lane's
+status. Two features can therefore run side by side, each with its own lane and its own
+remote QA attempt.
 
 Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first
 run, install the worker supervisor and configure `qa.env` or a worker inventory

@@ -58,11 +58,20 @@ When Biome complains, the code changes. `turbo format` fixes most of it.
 
 ## Branch and working-tree discipline
 
-There is one shared local environment on this machine: the user's Tilt cluster and
-dev servers serve the main checkout. That makes the working tree shared state.
+You work in a **dedicated worktree**, given in your charter as an absolute path. It is
+yours for the duration. A sibling worktree may be busy with another feature at the same
+time, and the main checkout is the user's — it is what their Tilt cluster and dev servers
+serve.
 
-- Work on the branch that is already checked out. Do not create, switch, or rebase
-  branches unless the charter explicitly tells you to.
+- **Stay inside your worktree.** Never `cd` outside it, and never touch the main
+  checkout or another worktree. If a path in your charter is not under your worktree,
+  stop and report it rather than guessing.
+- Work on the branch that is already checked out there. Do not create, switch, or
+  rebase branches unless the charter explicitly tells you to, and never run
+  `git worktree`, `git checkout <branch>` or `git fetch --prune`.
+- **The shared local Tilt cluster does not serve your worktree.** It serves the main
+  checkout. Build and test in your tree; do not expect a running service to reflect
+  your edits, and do not try to make it.
 - **Never `git stash`.** To shelve work, write `git diff > <name>.patch` or make a
   WIP commit. A stash is invisible to everyone else and gets lost.
 - Never kill a process by matching its name, and never kill a listener to free a

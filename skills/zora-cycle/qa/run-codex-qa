@@ -12,11 +12,12 @@
 # --services starts only the named Tilt services (infrastructure is derived by the
 # Tiltfile); --profile starts a named profile. Give exactly one.
 #
-# Run it from the zora-pantheon checkout, after writing <run-dir>/qa-charter.md from
+# Run it from the lane worktree whose commit you are sending (its preflight reads the
+# working tree it stands in), after writing <run-dir>/qa-charter.md from
 # qa/charter.template.md. It prints the absolute attempt directory,
 # <run-dir>/qa/<job-id>/attempts/<attempt-id>/, where verdict.json, the VM's manifest,
 # the event log and evidence/ land; check them with
-#   verdict-check.sh <attempt-dir> --remote
+#   verdict-check.sh <attempt-dir> <lane-worktree> --remote
 #
 # Config: <zora-harness>/qa.env (gitignored; ~/.zora-harness/qa.env still read as a
 # fallback), a file named by ZORA_QA_CONFIG, or the same variables in the environment
@@ -117,7 +118,7 @@ while [ $# -gt 0 ]; do
       case "$1" in --worker) WORKER="$2" ;; --run) RUN="$2" ;; --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;; --services) SERVICES="$2" ;; esac
       shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) usage ;;
   esac
 done

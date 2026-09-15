@@ -5,7 +5,9 @@ monorepo.
 
 ![The ten steps of the zora-harness cycle: task and acceptance criteria, clean-branch check, plan (zora-planner on Fable), lead and user approval, implement (zora-implementer on Opus, test-first), lead reruns the gates and rebases, validate (zora-validator on Fable with fresh context — tests, then local APIs and database, then browser), lead judges the evidence, gates and open a PR, stop at green CI without merging. FAIL loops back to implement, at most two rounds; INCOMPLETE returns to validation. Below, the local user scope: zora-harness/ is symlinked by install.sh into ~/.claude/agents and skills, which Claude Code loads against the zora-pantheon main checkout served by Tilt, the service APIs, MongoDB and the web-app.](docs/zora-harness.png)
 
-The diagram shows the original local-validator flow. The [remote QA guide](skills/zora-cycle/qa/README.md) describes the current two-slot flow.
+The diagram shows the original single-checkout, local-validator flow. Work now happens in
+a per-feature lane worktree, and validation in the [two-slot remote QA
+flow](skills/zora-cycle/qa/README.md).
 
 The real files live here, outside the repo. `install.sh` symlinks them into
 `~/.claude/`, which Claude Code reads from **any** working directory — so the
@@ -115,12 +117,12 @@ are easy to find. Gitignored, because this repo is public and run files hold int
 (screenshots, tenant and user ids, logs), so never `git add -f` anything under `runs/`.
 
 **Why subagents rather than agent teams.** Agent teams don't isolate teammates in
-worktrees, and this repo has one shared local environment: the Tilt cluster and dev
-servers serve the main checkout, so the working tree is shared state and only one
-mutating agent can run at a time. Plan → implement → validate remains sequential
-within each feature; remote QA attempts for separate features can overlap.
-Teams earn their cost on parallel independent exploration — which is what the repo's
-`review-and-evaluate` and dynamic workflows already cover.
+worktrees. This harness does the isolating itself: each feature gets its own lane
+worktree, one mutating agent per lane, and remote QA validates each lane from its
+pushed commit. Plan → implement → validate remains sequential within a lane; separate
+lanes and their QA attempts overlap. Teams earn their cost on parallel independent
+exploration — which is what the repo's `review-and-evaluate` and dynamic workflows
+already cover.
 
 **Reasoning effort.** The repo's `subagents` skill states that the Agent tool cannot
 set effort per spawn. That is stale — `effort` is a valid agent frontmatter field

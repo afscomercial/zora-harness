@@ -16,6 +16,10 @@ Read "The environment is not yours" before running anything.
 
 The Tilt cluster serves the main checkout and the user works in it all day.
 
+These ports belong to that single shared local environment. Exactly one lane may hold it
+at a time, so what answers on them is one checkout's code — not necessarily the lane you
+are thinking about.
+
 - **Never** run `tilt up`, `tilt down`, `kubectl delete`, or restart a deployment.
 - **Never** kill a process by matching its name, and never kill a listener to
   reclaim a port.

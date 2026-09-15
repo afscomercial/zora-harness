@@ -75,17 +75,40 @@ yourself. For a rich interview, the repo's `grill-me` skill does this well. Reso
 a ClickUp reference with the `clickup` skill first so you are grounded in the actual
 ticket. Write `$RUN/task.md`: the request verbatim and the acceptance criteria.
 
-**2. Check the lane before anything runs.**
+**2. Open the lane worktree.** Each feature gets its own worktree: its own checkout,
+its own branch, its own working tree. That is what lets two features run side by side.
 
 ```bash
-git status          # a dirty tree is a hard stop — surface it, never stash it
-git branch --show-current
+PANTHEON="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 ```
 
-Work happens on `feat/<slug>` off `origin/main`, checked out in the **main
-checkout** — that is what the user's Tilt cluster and dev servers serve. A worktree
-builds and tests fine but nothing running serves its code, so end-to-end validation
-there is not possible.
+That resolves the main checkout even when you are already inside a worktree.
+
+- **Resuming a run?** Take `lane_worktree` from the ledger head and confirm it is still
+  there with `git -C "$PANTHEON" worktree list`. If it is gone, the lane is gone — say
+  so and ask before recreating it.
+- **New lane?** Create it with the repo's own script, which forks from `origin/main`,
+  copies `.mcp.json` and every gitignored `.env` / `.env.test`, and runs `pnpm install`:
+
+  ```bash
+  "$PANTHEON/.agents/skills/worktree-manager/scripts/create-worktree.sh" <slug> origin/main feat/<slug>
+  ```
+
+Then fix the lane and check it:
+
+```bash
+LANE="$PANTHEON/worktrees/<slug>"
+git -C "$LANE" status            # a dirty tree is a hard stop — surface it, never stash it
+git -C "$LANE" branch --show-current
+```
+
+Every later git, turbo and pnpm command runs with `cd "$LANE"` or `-C "$LANE"`, and the
+dirty-tree hard stop applies to `$LANE`. **`git status` in the main checkout is not your
+lane's status** — that checkout belongs to the user and to the Tilt cluster serving it.
+
+Nothing running locally serves your lane, and that is fine: QA runs remotely against the
+commit you push, so the lane only has to build and test. Only the local fallback
+validator needs a served checkout, and it has its own exclusivity rule in step 7.
 
 **3. Plan.** Spawn `zora-planner` with the task, the acceptance criteria, absolute
 paths to every document it should read, and recent `git log` for the affected paths
@@ -100,15 +123,22 @@ approval. This is the last checkpoint before autonomous execution. Write the
 approved plan to `$RUN/plan.md`.
 
 **5. Implement.** Spawn `zora-implementer` with the approved plan verbatim, absolute
-paths, and — if lanes are sequential over the same module — an explicit do-not-touch
-list. **One mutating agent at a time.** Parallelism belongs to read-only work
-(exploration, review, verification); two agents committing in one checkout will
-sweep each other's half-finished files into unrelated commits.
+paths — `$LANE` among them, as the only tree it may touch — and an explicit
+do-not-touch list naming the files any other live lane owns.
+
+**One mutating agent per lane worktree.** Parallelism belongs to read-only work
+(exploration, review, verification) and to separate lanes; two agents committing in one
+worktree sweep each other's half-finished files into unrelated commits.
+
+Before starting a second lane, write the ownership split into **both** ledgers' standing
+heads and give each implementer the other's file list as do-not-touch. Lanes that want
+the same module are not parallel lanes — sequence them.
 
 **6. Re-run the gates yourself, then rebase.** Do not advance on the implementer's
 self-report.
 
 ```bash
+cd "$LANE"
 turbo check
 turbo check:types
 CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<package>
@@ -117,18 +147,20 @@ CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<package>
 Then rebase onto `origin/main` **before** validation, so the validator checks the
 code that will actually ship. Run the rebase and the post-rebase gates as separate,
 individually-checked steps — a chained command can swallow a mid-rebase conflict.
+If the rebase moved `pnpm-lock.yaml`, run `pnpm install` in the lane before the
+post-rebase gates.
 
 **7. Freeze the commit and send it to QA.** Codex runs QA as a **remote job on the
 isolated QA VM** — not a subagent. Never try to spawn it with the Agent tool or message
 it; `run-codex-qa` is the only interface. Setup: `~/.claude/skills/zora-cycle/qa/README.md`.
 
-1. **Freeze.** The tree must be clean and the implementation committed. Push that exact
-   commit with `git push -u origin HEAD`, never `--force`. A PR is not needed yet; the VM
-   only needs the commit. Record both in the ledger:
+1. **Freeze.** The lane's tree must be clean and the implementation committed. Push that
+   exact commit with `git -C "$LANE" push -u origin HEAD`, never `--force`. A PR is not
+   needed yet; the VM only needs the commit. Record both in the ledger:
 
    ```bash
-   BASE_SHA=$(git merge-base origin/main HEAD)
-   HEAD_SHA=$(git rev-parse HEAD)
+   BASE_SHA=$(git -C "$LANE" merge-base origin/main HEAD)
+   HEAD_SHA=$(git -C "$LANE" rev-parse HEAD)
    ```
 
 2. **Write a clean charter.** Copy `~/.claude/skills/zora-cycle/qa/charter.template.md` to
@@ -142,10 +174,13 @@ it; `run-codex-qa` is the only interface. Setup: `~/.claude/skills/zora-cycle/qa
    limit, and you are notified when it exits:
 
    ```bash
-   ~/.claude/skills/zora-cycle/qa/run-codex-qa \
+   cd "$LANE" && ~/.claude/skills/zora-cycle/qa/run-codex-qa \
      --run "$RUN" --base "$BASE_SHA" --commit "$HEAD_SHA" \
      --services "<svc> <svc> ..."    # or: --profile <tilt-profile>
    ```
+
+   Run it from the lane: its preflight reads the working tree it is standing in, so
+   from the main checkout it would refuse on the wrong HEAD, or worse, pass on it.
 
    Prefer `--services` with only what the change needs; the Tiltfile adds the
    infrastructure those services use. A named profile starts everything in it, and any
@@ -161,13 +196,37 @@ it; `run-codex-qa` is the only interface. Setup: `~/.claude/skills/zora-cycle/qa
 **Fallback.** If the VM is unreachable or Codex is unavailable, validate locally with the
 Claude `zora-validator` instead — give it the spec, the diff, the acceptance criteria and
 `$RUN`, never the implementer's reasoning — and record the fallback in the ledger. It
-writes `$RUN/verdict.json`; check it with `verdict-check.sh "$RUN"`.
+writes `$RUN/verdict.json`; check it with `verdict-check.sh "$RUN" "$LANE"`.
 
-**8. Judge.** Check the result mechanically first, from the repo root:
+There is exactly **one** local environment, and it serves one checkout. Claim it before
+asking the user to point Tilt anywhere:
 
 ```bash
-bash ~/.claude/skills/zora-cycle/verdict-check.sh "$ATTEMPT" --remote   # the attempt directory step 7 printed
+mkdir "$HARNESS/runs/.local-env-owner.d"    # fails if another lane holds it
+printf 'lane=%s\nworktree=%s\nsince=%s\n' "<slug>" "$LANE" "$(date -Iseconds)" \
+  > "$HARNESS/runs/.local-env-owner.d/owner"
 ```
+
+`mkdir` is the lock: it is atomic and it fails when the directory exists, which a
+markdown procedure needs because it cannot hold a `flock` across tool calls. Remove the
+directory in the same step, as soon as the validator returns. **Never steal it** — read
+the owner file and say who holds it. If it is more than six hours old, surface it as
+stale and ask; do not decide that yourself.
+
+Only the holder may ask the user to point local Tilt at its lane (the repo's
+`set-e2e-env` skill, then a Tilt restart the user runs). The harness still never starts
+or stops Tilt itself.
+
+**8. Judge.** Check the result mechanically first, naming the lane explicitly:
+
+```bash
+bash ~/.claude/skills/zora-cycle/verdict-check.sh "$ATTEMPT" "$LANE" --remote
+```
+
+`$ATTEMPT` is the attempt directory step 7 printed. Always pass `$LANE`: the repo
+argument defaults to the current directory, so omitting it checks the verdict against
+whatever tree you happen to be standing in — the main checkout, most likely, whose HEAD
+has nothing to do with your lane.
 
 Exit 0 means the verdict says PASS **and** it holds: the VM validated exactly the commit
 you sent, which is still your HEAD; its checkout was clean and Codex left tracked files
@@ -189,11 +248,20 @@ decide whether it is real and in scope.
   after two failed reruns, stop and bring it to the user.
 - `PASS` with `verdict-check` exit 0 → proceed to the PR, having personally read the diff.
 
-**9. Close.** Open the PR when the fast gates are green; CI is the acceptance gate.
-Write the title and body for someone with zero knowledge of how it was built — no
-lanes, no charters, no agent vocabulary. If `origin/main` moved since step 6, rebase
-again: HEAD moves, so the verdict goes stale by design — re-run QA on the new commit if the incoming
-changes touch the diff's files, and record the decision in the ledger either way.
+**9. Close.** Open the PR from the lane branch when the fast gates are green; CI is the
+acceptance gate. Write the title and body for someone with zero knowledge of how it was
+built — no lanes, no charters, no agent vocabulary. If `origin/main` moved since step 6,
+rebase again: HEAD moves, so the verdict goes stale by design — re-run QA on the new
+commit if the incoming changes touch the diff's files, and record the decision in the
+ledger either way.
+
+Once the PR is merged or abandoned, retire the lane and note it in the ledger:
+
+```bash
+git -C "$PANTHEON" worktree remove "$LANE"    # or the repo's prune-worktrees.sh
+```
+
+Never remove a lane whose PR is still open, and never remove another lane's worktree.
 
 For review, `agent-review`. For a peer-review ping, `ask-slack-review`. For a guided
 human pass, offer the repo's `manual-qa`.
@@ -215,6 +283,9 @@ the user's decision, made outside this pipeline.
   skipped steps, or finished implausibly fast is a broken run. Relaunch it.
 - **Primary sources win.** Live files, `git log`, and the actual spec beat skills,
   which beat your recollection.
+- **Your lane is a worktree.** Never run a mutating command against the main checkout:
+  it is the user's, and it is what the Tilt cluster serves. If a command does not carry
+  `-C "$LANE"` or follow a `cd "$LANE"`, it is pointed at the wrong tree.
 - **Never `git stash`.** Shelve with `git diff > x.patch` or a WIP commit.
 - **The environment is the user's.** Never start or stop Tilt, never kill a process
   by name, never kill a listener to free a port. Ask, and suggest the `! ` prefix.
@@ -230,6 +301,17 @@ current, and a **chronological log** of launches (with task ids), the lane's bas
 commit, and verdicts with their evidence. After a compaction or in a new session,
 reground from the head *and* the tail — a tail-only reground lets settled decisions
 fade.
+
+The head carries the lane's identity, so a fresh session knows which checkout it owns
+before it runs anything:
+
+```
+lane_slug:     <slug>
+lane_branch:   feat/<slug>
+lane_worktree: <absolute path to $LANE>
+base_commit:   <sha this lane forked from>
+other_lanes:   <slug> owns <paths>; <slug> owns <paths>   (or: none)
+```
 
 A task counts as launched only when its id from the tool result is in the ledger. A
 written charter is not a running agent. When the cycle ends, the PR body carries the

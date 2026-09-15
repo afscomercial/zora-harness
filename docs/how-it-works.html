@@ -337,8 +337,8 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
     <h3 id="rejected">Considered and rejected</h3>
     <p><strong>Agent teams</strong> &mdash; teammates messaging each other directly, with a shared task list. Turned down for three concrete reasons:</p>
     <ol>
-      <li>Teams don&rsquo;t isolate teammates in worktrees, and this repo has <strong>one shared local environment</strong>. The Tilt cluster and dev servers serve the main checkout, which makes the working tree shared state; two agents committing there sweep each other&rsquo;s half-finished files into unrelated commits.</li>
-      <li>Plan &rarr; implement &rarr; validate is <strong>sequential within each feature</strong>. Separate remote QA attempts can overlap without local agents mutating the same checkout.</li>
+      <li>Teams don&rsquo;t isolate teammates in worktrees. This harness isolates them itself &mdash; <strong>one lane worktree per feature, one mutating agent per lane</strong> &mdash; which is the part that actually matters. Two agents committing in one tree sweep each other&rsquo;s half-finished files into unrelated commits, and a team gives you no mechanism against that.</li>
+      <li>Plan &rarr; implement &rarr; validate is <strong>sequential within a lane</strong>. Separate lanes and their remote QA attempts overlap.</li>
       <li>Experimental, no session resumption, and every teammate permission prompt bubbles to the lead.</li>
     </ol>
     <p><strong>Dynamic workflows</strong> &mdash; a script holding the plan instead of the lead&rsquo;s turn-by-turn judgment. Genuinely useful for wide fan-out such as a codebase-wide audit. Overkill for a three-step chain.</p>

@@ -12,8 +12,9 @@ Bootstrap is serialized; ready attempts validate concurrently. More attempts que
 
 **Delivery order changed:** the original proposal put Stage 1 (local lane workflow)
 first. The user subsequently scoped implementation to QA, so Stage 2 was delivered
-first. Stage 1 remains pending. Two-slot QA does not mean the cycle now automatically
-creates or coordinates parallel feature worktrees.
+first; Stage 1 followed on `feat/parallel-lanes`. Both halves are now in place — the
+cycle opens a lane worktree per feature, and remote QA validates each lane's pushed
+commit in its own slot. The two-lane live verification below has not been run.
 
 **Developer compatibility:** the Pantheon changes are opt-in. With
 `ZORA_TILT_STAGING_ROOT` unset or empty, existing generated build commands, paths,
@@ -29,8 +30,8 @@ is tracked separately so mocked coverage is not confused with a VPS acceptance t
 
 | ID | Feature | Status | Delivered / remaining |
 |---|---|---|---|
-| L1 | Lane worktree creation, resume, ownership and per-lane gates | Pending | Stage 1 below; main-checkout cycle rules remain. |
-| L2 | Exclusive local fallback environment across lanes | Pending | Proposed ownership directory and served-commit check are not added. |
+| L1 | Lane worktree creation, resume, ownership and per-lane gates | Complete | `zora-cycle` step 2 opens/resumes `worktrees/<slug>` via the repo's `create-worktree.sh`; steps 5-9 run in `$LANE`; ledger head carries lane identity; step 9 retires the worktree. Two-lane live verification remains. |
+| L2 | Exclusive local fallback environment across lanes | Complete | `runs/.local-env-owner.d` atomic claim in step 7's fallback; `zora-validator` returns INCOMPLETE when the served HEAD does not match. Live two-lane contention test remains. |
 | Q1 | Worker inventory and explicit routing | Complete | `ZORA_QA_WORKERS_FILE`, `--worker`, legacy host/home alias, recorded reconnect destination. No automatic balancing. |
 | Q2 | Immutable dispatch and durable queue | Complete | UUID job/attempt IDs, atomic upload, hash binding, idempotent submit, FIFO admission and queue timeout. |
 | Q3 | Reconnect, collect and cancel | Complete | Original attempt survives SSH loss; per-attempt collection lock prevents concurrent downloads overwriting evidence. |
@@ -123,9 +124,10 @@ Shared Docker/BuildKit use is covered by headroom rather than independently mete
 per-attempt cgroups. An OOM is preserved as evidence; reproducible feature memory
 regressions must not automatically be dismissed as infrastructure failures.
 
-## Stage 1 — Parallel lanes: not implemented in this rollout
+## Stage 1 — Parallel lanes: implemented, not yet live-verified
 
-Future work: two features plan, implement and gate in separate lane worktrees.
+Delivered on `feat/parallel-lanes`; the verification at the end of this section has not
+been run. Two features plan, implement and gate in separate lane worktrees.
 QA already supports concurrent attempts; this stage must integrate with the existing
 protocol-v4 dispatcher, not reintroduce serial QA. Reuse Pantheon’s
 `.agents/skills/worktree-manager/scripts/create-worktree.sh` for creation and local
@@ -296,8 +298,8 @@ itself has syntax validation, not a separately recorded live rerun.
   whose host resolver configuration is unsuitable (Q17).
 - [ ] **Multi-VPS:** provision a second worker and verify routing, collection and cancellation
   after changing the default worker (Q16/A12). Automatic scheduling remains out of scope.
-- [ ] **Parallel lanes:** implement Stage 1 worktree/ledger/local-fallback coordination
-  and its two-lane verification; reuse current QA attempt paths (L1/L2).
+- [ ] **Parallel lanes:** run the two-lane verification at the end of the Stage 1
+  section — the code is delivered, the live proof is not (L1/L2).
 
 Operational rollback: drain/cancel/release attempts and resolve quarantined ownership
 before reconfiguring with the installer. One slot with `netns` retains isolation;
