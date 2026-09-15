@@ -26,5 +26,6 @@ jobs:
           python3 -B test-runner.py
           python3 -B test-worker.py
           python3 -B test-sandbox.py
+          python3 -B test-test-env.py
           python3 -B test-dispatcher.py
           python3 -B test-extractor.py

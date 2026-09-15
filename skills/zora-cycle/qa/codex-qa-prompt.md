@@ -113,8 +113,23 @@ required; a rung the charter skips is recorded as `skipped` with the charter's r
 `pnpm turbo check:types`. Wait for each.
 
 **Rung 2 — Unit and integration tests.** For every package the charter names and every
-package the diff touches:
-`CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<package>`. If the
+package the diff touches, inspect its package scripts first. For a workspace listed in
+`.circleci/services.json`, apply its committed CI test defaults only to the test process:
+`CI=true NO_COLOR=1 TURBO_UI=false python3 "$QA_TEST_ENV_HELPER" <package> pnpm turbo test:agentic --filter=<package> --env-mode=loose`.
+Use `--env-mode=loose` for these wrapped Turbo commands, matching the existing CI job
+configuration, so Turbo passes the helper's child environment through to the test task.
+Turbo's strict filtering can otherwise discard the required test variables. The helper
+reads that exact checkout's shared primary test-container environment from the committed
+CI job template, then overlays the service's `testEnvVars`. It omits the shared
+`MONGO_TEST_URI` default because it does not provision CI's standalone MongoDB sidecar;
+tests keep their existing memory-server fallback unless an explicit test URI is already
+configured. It does not change files or the running application environment. Packages absent from that configuration run their
+existing test command directly with the same CI/NO_COLOR/TURBO_UI settings.
+
+Confirm a test suite actually ran. If `test:agentic` is absent, use the existing
+one-shot test script through Turbo; for web-app use `pnpm turbo test --filter=web-app -- --run`.
+A successful command that only built dependencies is not test evidence. Never add or
+edit package scripts or invent production credentials to make a gate pass. If the
 diff touches `packages/*`, test the dependent services too. Then judge the tests
 themselves: would they fail if the feature were broken? A test that asserts a mock was
 called proves nothing about the spec.

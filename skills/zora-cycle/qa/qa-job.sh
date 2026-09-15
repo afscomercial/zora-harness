@@ -330,7 +330,7 @@ run_codex() {
     fi
   fi
   export QA_AUTH_ORIGINS="${QA_AUTH_ORIGINS:-}"
-  export QA_BROWSER_HELPER="$IN/qa-browser.cjs" QA_WORK="$WORK"
+  export QA_BROWSER_HELPER="$IN/qa-browser.cjs" QA_TEST_ENV_HELPER="$IN/qa-test-env.py" QA_WORK="$WORK"
 
   HEAD_BEFORE="$(git -C "$WORK" rev-parse HEAD)"
   [ -z "$(git -C "$WORK" status --porcelain --untracked-files=no)" ] && CLEAN_BEFORE=true
@@ -352,6 +352,7 @@ run_codex() {
     printf -- '- Approved authentication origins (exact origins only): %s\n' "${QA_AUTH_ORIGINS:-none}"
     printf -- '- Browser boundary helper ($QA_BROWSER_HELPER): `%s` (self-test: evidence/0-browser-boundary.json)\n' "$IN/qa-browser.cjs"
     printf -- '- Test data seeded by: %s\n' "$SEEDED"
+    printf -- '- CI test environment helper ($QA_TEST_ENV_HELPER): `%s` (test child process only)\n' "$IN/qa-test-env.py"
     printf -- '- Evidence directory ($QA_EVIDENCE_DIR): `%s`\n' "$EVID"
     printf -- '- Scratch directory ($QA_SCRATCH): `%s`\n' "$SCRATCH"
     printf '\n---\n\n'

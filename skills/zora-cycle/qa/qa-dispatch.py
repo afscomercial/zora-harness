@@ -17,7 +17,7 @@ import uuid
 
 HERE = Path(__file__).resolve().parent
 BUNDLE = ('qa-job.sh', 'qa-network.sh', 'qa-sandbox.sh', 'codex-qa-prompt.md', 'verdict.schema.json',
-          'seed-baseline.cjs', 'qa-browser.cjs', 'redact-evidence.py')
+          'seed-baseline.cjs', 'qa-browser.cjs', 'redact-evidence.py', 'qa-test-env.py')
 
 
 def canonical_hash(files):
