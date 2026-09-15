@@ -96,8 +96,9 @@ Rejected for three concrete reasons:
    environment**: the Tilt cluster and dev servers serve the main checkout, which
    makes the working tree shared state. Two agents committing there sweep each
    other's half-finished files into unrelated commits.
-2. Plan → implement → validate is **sequential**. Teams pay off on parallel
-   independent exploration, not on a dependency chain.
+2. Plan → implement → validate is **sequential within each feature**. Separate
+   features can have overlapping remote QA attempts; that does not require local
+   implementation agents to mutate the same checkout concurrently.
 3. Experimental, no session resumption, and every teammate permission prompt
    bubbles to the lead.
 
@@ -113,16 +114,53 @@ review). Overkill for a three-step chain.
 
 ### QA on an isolated VM
 
-Validation normally runs as a remote job. The lead freezes the commit, pushes it, and
-writes a QA charter — commits, task, acceptance criteria, Tilt profile, services, test
-accounts, required rungs, and nothing about how the change was built. `run-codex-qa`
-sends an immutable attempt over SSH to a configured worker. A systemd supervisor queues
-it for a reserved slot, clones the exact commit, builds a fresh Kind cluster with the
-Tilt profile, seeds clean data, and runs Codex (`gpt-6-astra`) through
-the whole ladder. The verdict, a manifest with checksums, Codex's event log and the
-evidence come back as files. Codex is never a Claude Code subagent; the dispatcher is
-the only interface. When the VM is unavailable, the local Fable `zora-validator` takes
-over. Setup and the security model live in `skills/zora-cycle/qa/README.md`.
+Validation normally runs as a remote job. Codex is never a Claude Code subagent;
+`run-codex-qa` is the interface between the lead and the QA worker.
+
+1. **Freeze and dispatch.** The lead pushes the exact commit and writes a charter:
+   task, acceptance criteria, commits, Tilt profile or service selection, test accounts,
+   and required rungs. The dispatcher uploads an immutable bundle with unique job and
+   attempt IDs to the selected worker.
+2. **Queue and reserve.** A systemd supervisor reserves capacity. The current VPS has
+   two slots; further attempts wait. Queue time does not consume a feature-fix retry.
+3. **Prepare the environment.** Each attempt gets its own checkout, Kind cluster,
+   database, network namespace, kubeconfig, Tilt state, and staging paths. Bootstrap
+   is serialized to limit resource peaks; this does not serialize the QA that follows.
+4. **Run Codex QA.** Ready environments validate concurrently through static gates,
+   focused tests, API/database checks, authenticated browser testing, and adversarial
+   checks. The two current slots use the same approved login in separate browser
+   sessions, with independently seeded databases.
+5. **Clean up and publish.** The supervisor cleans only attempt-owned resources and
+   releases the slot. Failed cleanup quarantines capacity; retained environments hold
+   their slots until release or expiry. It records cleanup status and publishes the
+   final archive before marking the attempt terminal.
+6. **Verify the result.** The lead downloads the verdict, manifest, checksums, event
+   log, and evidence, then runs `verdict-check.sh --remote` to bind the result to the
+   dispatched attempt and commit. The lead judges the findings; product verdict and
+   cleanup status are separate.
+
+SSH is transport, not the lifetime of the QA process. A disconnect does not cancel
+or redispatch the attempt: reconnect using its printed directory. The reaper handles
+interrupted supervisors and reconciles owned resources. When remote QA is unavailable,
+the local Fable validator remains the fallback; check the remote attempt's status
+before deciding to rerun or fall back.
+
+**Developer compatibility.** Ordinary Tilt commands, paths, profiles, and ports stay
+unchanged. Parallel QA requires the opt-in
+[Pantheon staging prerequisite](https://github.com/HouseNumbers/zora-pantheon/pull/1897)
+in the feature commit. Older commits run exclusively, without patching their frozen
+checkout. Harness installation itself still adds no files to Pantheon.
+
+**Worker expansion.** `ZORA_QA_WORKERS_FILE` configures named workers, selected explicitly
+with `--worker`. Status, collection, and cancellation use the recorded worker even if
+the default changes. Automatic cross-worker balancing is not implemented. The live
+rollout verified two six-service environments at the same commit; larger profiles,
+different-commit pairs, and a second physical VPS remain separate acceptance work.
+
+See the [QA setup and operator guide](../skills/zora-cycle/qa/README.md) and
+[parallel QA plan and rollout results](plans/parallel-features.md). Network namespaces
+prevent accidental collisions between trusted jobs; root agents still share the Docker
+host. QA must not invoke global cleanup such as `pnpm dev:tilt:clean`.
 
 ### Where the files live
 
@@ -442,8 +480,9 @@ What *is* enforced:
   itself PASS while carrying a defect. A PASS is now a file checked by a script, not
   a sentence.
 - **`verdict-check.sh --remote`** also checks the QA VM's manifest: the exact commit and
-  base that were sent, a clean checkout, no tracked file modified by Codex, a working
-  environment, and a checksum for every downloaded file. It guards against accidents,
+  base that were sent, matching attempt/worker/environment IDs and charter/bundle
+  hashes, a clean checkout, no tracked file modified by Codex, a working environment,
+  and a checksum for every downloaded file. It guards against accidents,
   not a compromised VM — which is why the VM holds only sandbox credentials.
 
 What the script cannot check is whether the evidence is *honest* — a validator could
@@ -462,14 +501,25 @@ claude
 ```
 
 Validation runs on the QA VM, so your local Tilt is not needed for it. Before the first
-run, set up the VM and `qa.env` at the harness root, which is gitignored
-(`skills/zora-cycle/qa/README.md`), then
-try a dispatch that sends nothing:
+run, install the worker supervisor and configure `qa.env` or a worker inventory
+following the [QA setup guide](../skills/zora-cycle/qa/README.md). Runtime configuration
+and credentials stay out of Git. Try a dispatch that sends nothing:
 
 ```bash
 ~/.claude/skills/zora-cycle/qa/run-codex-qa --run "$RUN" --base "$BASE_SHA" \
   --commit "$HEAD_SHA" --profile documents --dry-run
 ```
+
+The dispatcher prints an absolute attempt directory. Reuse it after a disconnect:
+
+```bash
+~/.claude/skills/zora-cycle/qa/run-codex-qa --status "$ATTEMPT"
+~/.claude/skills/zora-cycle/qa/run-codex-qa --collect "$ATTEMPT"
+~/.claude/skills/zora-cycle/verdict-check.sh "$ATTEMPT" "$PWD" --remote
+```
+
+Collection does not start another execution. Use `run-codex-qa --cancel "$ATTEMPT"`
+only when you intend to stop the attempt; a lost SSH connection alone is not a reason to create a replacement.
 
 Only the local fallback validator needs your own environment running:
 
@@ -479,6 +529,7 @@ Only the local fallback validator needs your own environment running:
 ```
 
 Two deliberate stops: **approve the plan**, and **make the final call**. Possible
-interruptions: the QA VM is unreachable or its environment fails — the lead reruns the
-same commit or falls back to the local validator — or the fallback validator asks you
+interruptions: the QA VM is unreachable or its environment fails — the lead first
+checks the existing attempt, then decides whether to rerun the same commit or use the
+local validator — or the fallback validator asks you
 to start Tilt. The cycle never merges.

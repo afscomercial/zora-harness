@@ -5,6 +5,8 @@ monorepo.
 
 ![The ten steps of the zora-harness cycle: task and acceptance criteria, clean-branch check, plan (zora-planner on Fable), lead and user approval, implement (zora-implementer on Opus, test-first), lead reruns the gates and rebases, validate (zora-validator on Fable with fresh context — tests, then local APIs and database, then browser), lead judges the evidence, gates and open a PR, stop at green CI without merging. FAIL loops back to implement, at most two rounds; INCOMPLETE returns to validation. Below, the local user scope: zora-harness/ is symlinked by install.sh into ~/.claude/agents and skills, which Claude Code loads against the zora-pantheon main checkout served by Tilt, the service APIs, MongoDB and the web-app.](docs/zora-harness.png)
 
+The diagram shows the original local-validator flow. The [remote QA guide](skills/zora-cycle/qa/README.md) describes the current two-slot flow.
+
 The real files live here, outside the repo. `install.sh` symlinks them into
 `~/.claude/`, which Claude Code reads from **any** working directory — so the
 harness is available inside `zora-pantheon` without a single file being added to
@@ -53,11 +55,35 @@ end, on this machine only.
 
 ### Remote QA — `skills/zora-cycle/qa/`
 
-Validation runs as a remote job on a dedicated VM: the lead freezes and pushes a commit,
-writes a charter, and `run-codex-qa` sends it over SSH. The selected worker queues an immutable attempt and builds a disposable Kind + Tilt
-copy of the local environment in a reserved slot and runs Codex (`gpt-6-astra`) through the validation
-ladder; the verdict and evidence come back as files for `verdict-check.sh --remote` and
-the lead's judgment. Setup and the security model: `skills/zora-cycle/qa/README.md`.
+Validation runs as a remote job: the lead freezes and pushes a commit, writes a
+charter, and `run-codex-qa` sends an immutable attempt over SSH to a selected worker.
+Codex (`gpt-6-astra`) runs the validation ladder; the lead checks the downloaded
+verdict and evidence with `verdict-check.sh --remote` before making the final call.
+
+The current VPS has **two QA slots**:
+
+- Each attempt owns its checkout, Kind cluster, database, network namespace, Tilt
+  state, and staging directories. Both slots use the same approved test account
+  with separate browser sessions.
+- Environment bootstrap is serialized to control resource usage. Once ready,
+  attempts can validate concurrently; additional attempts wait for capacity.
+- QA survives an SSH disconnect. Use `--status`, `--collect`, or `--cancel` with the
+  printed attempt directory to reconnect to the same attempt.
+- Cleanup releases the slot. Failed cleanup quarantines it; a systemd reaper
+  recovers interrupted attempts without touching neighboring environments.
+
+Regular developer Tilt behavior is unchanged. Feature branches need the opt-in
+[Pantheon staging prerequisite](https://github.com/HouseNumbers/zora-pantheon/pull/1897)
+for parallel QA; commits without it run exclusively. This is a separate prerequisite
+from installing the harness symlinks.
+
+Worker inventory supports explicit selection of additional VPSs; automatic balancing
+across workers is not implemented. Two overlapping six-service environments passed
+live QA; larger service combinations and a second physical VPS remain unverified.
+
+See the [QA setup and operator guide](skills/zora-cycle/qa/README.md),
+[detailed flow](docs/HOW-IT-WORKS.md#qa-on-an-isolated-vm), and
+[rollout evidence and remaining acceptance work](docs/plans/parallel-features.md).
 
 ## Design notes
 
@@ -91,7 +117,8 @@ are easy to find. Gitignored, because this repo is public and run files hold int
 **Why subagents rather than agent teams.** Agent teams don't isolate teammates in
 worktrees, and this repo has one shared local environment: the Tilt cluster and dev
 servers serve the main checkout, so the working tree is shared state and only one
-mutating agent can run at a time. Plan → implement → validate is sequential anyway.
+mutating agent can run at a time. Plan → implement → validate remains sequential
+within each feature; remote QA attempts for separate features can overlap.
 Teams earn their cost on parallel independent exploration — which is what the repo's
 `review-and-evaluate` and dynamic workflows already cover.
 
@@ -102,7 +129,9 @@ this harness stays out of that repository.
 
 ## Relationship to the repo
 
-Reads and composes, never edits:
+The harness reads and composes these repository instructions and tools. Its
+installation adds no repository files; parallel QA separately requires the opt-in
+Tilt prerequisite described above:
 
 - `AGENTS.md` — structure, commands, Definition of Done
 - `.agents/skills/orchestrate` — the full pipeline `zora-cycle` is the light sibling of
