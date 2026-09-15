@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Durable SSH dispatch; reconnect commands use persisted routing, never defaults."""
 import argparse
+import fcntl
 import hashlib
 import io
 import json
@@ -83,6 +84,17 @@ def collect(directory, d):
     state = status(d)
     if state not in ('done', 'failed', 'cancelled'):
         raise ValueError(f'attempt is {state}; collection does not start another execution')
+    # Keep the inode persistent: unlinking a lock file would let later callers lock
+    # a different inode while a waiting collector still owns the original one.
+    with (directory / '.collection.lock').open('a+') as collection_lock:
+        fcntl.flock(collection_lock, fcntl.LOCK_EX)
+        try:
+            _collect_locked(directory, d, state)
+        finally:
+            fcntl.flock(collection_lock, fcntl.LOCK_UN)
+
+
+def _collect_locked(directory, d, state):
     download = directory / '.download'
     download.mkdir(exist_ok=True)
     archive = download / 'result.tar.gz'

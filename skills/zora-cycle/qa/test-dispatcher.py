@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Contract regressions for reconnect routing, bundle identity, and verdict binding."""
 import hashlib
+import io
 import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -65,6 +68,61 @@ class DispatcherTests(unittest.TestCase):
                 self.assertEqual(call.call_args.args[0]['host'], 'recorded-host')
                 self.assertIn('status attempt', call.call_args.args[1])
                 self.assertNotIn('submit', call.call_args.args[1])
+
+    def test_concurrent_collectors_wait_for_complete_publication(self):
+        bundle = io.BytesIO()
+        with tarfile.open(fileobj=bundle, mode='w:gz') as archive:
+            data = b'complete fixture evidence'
+            member = tarfile.TarInfo('evidence/result.txt')
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+        first_downloading = threading.Event()
+        second_locking = threading.Event()
+        release_first = threading.Event()
+        second_downloading = threading.Event()
+        errors, observed_prior_collection = [], []
+        real_flock = dispatch.fcntl.flock
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            def flock(handle, operation):
+                if threading.current_thread().name == 'second' and operation == dispatch.fcntl.LOCK_EX:
+                    second_locking.set()
+                return real_flock(handle, operation)
+            def download(d, command, output):
+                if threading.current_thread().name == 'first':
+                    first_downloading.set()
+                    if not release_first.wait(5):
+                        raise AssertionError('first collector was not released')
+                else:
+                    observed_prior_collection.append((directory / 'collection.json').exists())
+                    second_downloading.set()
+                output.write(bundle.getvalue())
+            def collector():
+                try:
+                    dispatch.collect(directory, {'remote_dir': '/fixture'})
+                except Exception as exc:
+                    errors.append(exc)
+            with patch.object(dispatch, 'status', return_value='done'), \
+                    patch.object(dispatch, 'ssh', side_effect=download), \
+                    patch.object(dispatch.fcntl, 'flock', side_effect=flock):
+                first = threading.Thread(target=collector, name='first')
+                second = threading.Thread(target=collector, name='second')
+                first.start()
+                try:
+                    self.assertTrue(first_downloading.wait(5))
+                    second.start()
+                    self.assertTrue(second_locking.wait(5))
+                    self.assertFalse(second_downloading.wait(.1))
+                finally:
+                    release_first.set()
+                    first.join(5)
+                    if second.ident is not None:
+                        second.join(5)
+                self.assertFalse(first.is_alive() or second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(observed_prior_collection, [True])
+            self.assertEqual((directory / 'evidence/result.txt').read_bytes(), data)
+            self.assertEqual(json.loads((directory / 'collection.json').read_text())['status'], 'done')
 
     def test_collection_refuses_running_attempt_without_download(self):
         with patch.object(dispatch, 'status', return_value='validating'), patch.object(dispatch, 'ssh') as call:
