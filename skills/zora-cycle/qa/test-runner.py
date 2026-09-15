@@ -25,7 +25,7 @@ class RunnerTests(unittest.TestCase):
         self.tool('docker', 'exit 0')
         self.tool('codex', 'if [ "$1" = --version ]; then echo mock; exit 0; fi\nexit 1')
         self.functions = self.root/'functions.sh'
-        self.functions.write_text(RUNNER.read_text().split('exec 9>')[0])
+        self.functions.write_text(RUNNER.read_text().split('# Managed jobs execute')[0])
     def tearDown(self):
         self.tmp.cleanup()
     def tool(self, name, body):
@@ -92,6 +92,95 @@ esac''')
         self.assertEqual(mount['containerPath'],'/mnt/mac'+str(self.job/'work/tilt/data'))
         self.assertIn(str(self.job/'kubeconfig'),calls.read_text())
         self.assertIn('zora-qa-regression',calls.read_text())
+
+    def test_managed_prepare_does_not_stop_shared_resources(self):
+        calls=self.root/'shared-mutation'
+        for tool in ('docker','systemctl'):
+            self.tool(tool, f'touch "{calls}"; exit 1')
+        result=self.run_functions('QA_MANAGED=1\nprepare_exclusive_environment')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(calls.exists())
+
+    def test_managed_kind_binds_host_gateway_and_checks_actual_kubeconfig(self):
+        calls=self.root/'kubectl-calls'
+        self.tool('kind', 'exit 0')
+        self.tool('nsenter', 'shift; exec \"$@\"')
+        self.tool('kubectl',f'printf "%s\\n" "$*" > "{calls}"')
+        self.env.update(QA_MANAGED='1', QA_NET_ISOLATION='netns', QA_HOST_IP='10.203.0.1',
+                        QA_STAGING_ROOT=str(self.job/'staging'))
+        result=self.run_functions('create_cluster')
+        self.assertEqual(result.returncode,0,result.stderr)
+        config=json.loads((self.job/'kind.json').read_text())
+        self.assertEqual(config['networking']['apiServerAddress'],'10.203.0.1')
+        self.assertNotIn('apiServerPort',config['networking'])
+        self.assertIn(str(self.job/'kubeconfig'),calls.read_text())
+        self.assertIn('get --raw=/readyz',calls.read_text())
+
+    def test_managed_vm_settings_do_not_override_identity(self):
+        (self.root/'vm.env').write_text('QA_AUTH_FILE=/wrong\nQA_SLOT_ID=wrong\n')
+        self.env.update(QA_MANAGED='1',QA_STAGING_ROOT=str(self.job/'staging'),
+                        QA_AUTH_FILE='/correct',QA_SLOT_ID='slot-1')
+        result=self.run_functions('printf "%s %s" "$QA_AUTH_FILE" "$QA_SLOT_ID"')
+        self.assertEqual(result.stdout,'/correct slot-1')
+
+    def test_managed_finalize_waits_for_supervisor_and_binds_manifest(self):
+        dispatch=dict(protocol_version=4,job_id='logical',attempt_id='regression',
+                      worker_id='vps-1',environment_id='regression',
+                      charter_sha256='c'*64,bundle_sha256='b'*64)
+        (self.job/'in/dispatch.json').write_text(json.dumps(dispatch))
+        self.env.update(QA_MANAGED='1',QA_STAGING_ROOT=str(self.job/'staging'),
+                        QA_SLOT_ID='slot-1',QA_NET_ISOLATION='netns')
+        result=self.run_functions('LOCKED=true\nENV_READY=true\nCODEX_RAN=true\nfinalize')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.job/'status').read_text().strip(),'packaging')
+        self.assertEqual((self.job/'runner-status').read_text().strip(),'done')
+        manifest=json.loads((self.job/'out/remote-manifest.json').read_text())
+        for key,value in dispatch.items():
+            self.assertEqual(manifest[key],value)
+        self.assertEqual(manifest['slot_id'],'slot-1')
+
+    def test_long_attempts_have_distinct_cluster_names(self):
+        self.env.update(QA_MANAGED='1',QA_STAGING_ROOT=str(self.job/'staging'))
+        names=[]
+        for ending in ('a','b'):
+            args=self.args.copy(); args[1]='same-prefix-'*6+ending
+            result=self.run_with(args,'printf %s "$QA_CLUSTER"')
+            self.assertEqual(result.returncode,0,result.stderr)
+            names.append(result.stdout)
+        self.assertNotEqual(*names)
+        self.assertTrue(all(len(name)<=35 for name in names))
+
+    def run_network_cleanup(self, firewall_body):
+        self.tool('ip', 'if [ "$1" = -j ]; then echo "[]"; fi')
+        self.tool('iptables',firewall_body)
+        self.env.update(QA_NS='qa-'+self.root.name,QA_HOST_IP='10.203.0.1',QA_PEER_IP='10.203.0.2')
+        return subprocess.run(['bash',str(RUNNER.with_name('qa-network.sh')),'down'],
+                              env=self.env,capture_output=True,text=True)
+
+    def test_network_cleanup_missing_resources_is_idempotent(self):
+        result=self.run_network_cleanup('if [[ "$*" = *"-S"* ]]; then exit 0; else exit 1; fi')
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_network_cleanup_cannot_verify_firewall_fails(self):
+        result=self.run_network_cleanup('exit 1')
+        self.assertNotEqual(result.returncode,0)
+
+    def test_network_cleanup_surviving_tagged_rule_fails(self):
+        result=self.run_network_cleanup('if [[ "$*" = *"-S"* ]]; then echo "-A FORWARD -m comment --comment $QA_NS -j ACCEPT"; fi')
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('firewall rules survived',result.stderr)
+
+    def test_tilt_cli_state_is_private_and_helm_restores_job_kubeconfig(self):
+        self.tool('kubectl','exit 0')
+        self.tool('mongosh','exit 0')
+        self.tool('helm','printf "%s" "$KUBECONFIG"')
+        self.tool('tilt','printf "%s|%s|%s|%s" "$TILT_DEV_DIR" "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$HOME"')
+        result=self.run_functions('install_command_wrappers\ntilt get uiresources\nprintf "\\n"\nKUBECONFIG=/deleted-frozen-config helm list')
+        self.assertEqual(result.returncode,0,result.stderr)
+        lines=result.stdout.splitlines()
+        state=str(self.job/'scratch/tilt-state')
+        self.assertEqual(lines[0],f'{state}/legacy|{state}/runtime|{state}/config|{self.env["HOME"]}')
+        self.assertEqual(lines[1],str(self.job/'kubeconfig'))
 
     def run_with(self, args, body):
         return subprocess.run(['bash','-c','source "$1" "${@:2}"\n'+body,

@@ -44,7 +44,7 @@ Every run keeps its state on disk in the harness checkout's `runs/` folder:
 ├── plan.md        the approved plan
 ├── ledger.md      standing decisions + chronological log
 ├── qa-charter.md  the QA charter sent to the VM
-├── qa/<job-id>/   one remote QA job: verdict.json, remote-manifest.json,
+├── qa/<job-id>/attempts/<attempt-id>/   one remote QA job: verdict.json, remote-manifest.json,
 │                  dispatch.json, codex-events.jsonl, evidence/
 ├── evidence/      fallback validator only: its evidence files
 ├── verdict.json   fallback validator only: its verdict
@@ -153,8 +153,10 @@ it; `run-codex-qa` is the only interface. Setup: `~/.claude/skills/zora-cycle/qa
 
    It refuses before sending anything if HEAD is not that commit, the tree is dirty, the
    commit is not on origin, or the charter is not clean. It prints the job folder,
-   `$RUN/qa/<job-id>/`, where the verdict, the VM's manifest, Codex's event log and
-   `evidence/` land. Record the job id in the ledger.
+   `$RUN/qa/<job-id>/attempts/<attempt-id>/`, where the verdict, the VM's manifest, Codex's event log and
+   `evidence/` land. Record job ID, attempt ID, worker ID and the absolute attempt directory in the ledger.
+   If SSH disconnects, use `run-codex-qa --status "$ATTEMPT"` and `--collect "$ATTEMPT"`;
+   never redispatch an ambiguous attempt. Queued capacity does not spend a retry allowance.
 
 **Fallback.** If the VM is unreachable or Codex is unavailable, validate locally with the
 Claude `zora-validator` instead — give it the spec, the diff, the acceptance criteria and

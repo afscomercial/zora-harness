@@ -4,7 +4,7 @@
 # this script is the only interface between the Claude Code lead and the VM.
 #
 #   run-codex-qa --run <run-dir> --base <sha> --commit <sha> \
-#                (--profile <tilt-profile> | --services "<svc> <svc> ...") [--dry-run]
+#                (--profile <tilt-profile> | --services "<svc> <svc> ...") [--worker <id>] [--dry-run]
 #
 # --services starts only the named Tilt services (infrastructure is derived by the
 # Tiltfile); --profile starts a named profile. Give exactly one.
@@ -31,7 +31,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-usage()  { echo "usage: run-codex-qa --run <run-dir> --base <sha> --commit <sha> (--profile <tilt-profile> | --services \"<svc> ...\") [--dry-run]" >&2; exit 2; }
+usage()  { echo "usage: run-codex-qa --run <run-dir> --base <sha> --commit <sha> (--profile <tilt-profile> | --services \"<svc> ...\") [--worker <id>] [--dry-run]" >&2; exit 2; }
 refuse() { echo "REFUSED    $*" >&2; exit 1; }
 failed() { echo "FAILED     $*" >&2; exit 3; }
 
@@ -99,12 +99,15 @@ if [ "${1:-}" = "--extract" ]; then
   exit 0
 fi
 
-RUN="" BASE="" COMMIT="" PROFILE="" SERVICES="" DRY=0
+if [[ "${1:-}" = --collect || "${1:-}" = --status || "${1:-}" = --cancel ]]; then
+  exec python3 "$HERE/qa-dispatch.py" "$@"
+fi
+RUN="" BASE="" COMMIT="" PROFILE="" SERVICES="" WORKER="" DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --run|--base|--commit|--profile|--services)
+    --run|--base|--commit|--profile|--services|--worker)
       [ $# -ge 2 ] || usage
-      case "$1" in --run) RUN="$2" ;; --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;; --services) SERVICES="$2" ;; esac
+      case "$1" in --worker) WORKER="$2" ;; --run) RUN="$2" ;; --base) BASE="$2" ;; --commit) COMMIT="$2" ;; --profile) PROFILE="$2" ;; --services) SERVICES="$2" ;; esac
       shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
@@ -182,78 +185,8 @@ PY
 
 REPO_URL="${ZORA_QA_REPO:-$(git remote get-url origin)}"
 [[ "$REPO_URL" != *"'"* ]] || refuse "repository URL contains a quote"
-JOB="$(date -u +%Y%m%dT%H%M%SZ)-${COMMIT_FULL:0:12}"
-JOBDIR="$RUN/qa/$JOB"
-mkdir -p "$JOBDIR/.download"
-HARNESS_SHA="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-
-write_dispatch() {  # $1 = remote status, or "requested"
-  python3 - "$JOBDIR/dispatch.json" "$1" <<PY
-import json, sys, datetime
-path, status = sys.argv[1], sys.argv[2]
-try:
-    d = json.load(open(path))
-except (OSError, ValueError):
-    d = {"job_id": "$JOB", "base": "$BASE_FULL", "commit": "$COMMIT_FULL", "profile": "$PROFILE", "services": "$SERVICES".split(),
-         "host": "${ZORA_QA_HOST:-}", "remote_dir": "${ZORA_QA_REMOTE_HOME:-}/jobs/$JOB",
-         "harness": "$HARNESS_SHA",
-         "requested_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
-d["status"] = status
-if status not in ("requested", "dry-run"):
-    d["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-json.dump(d, open(path, "w"), indent=2)
-PY
-}
-
-if [ "$DRY" = 1 ]; then
-  write_dispatch dry-run
-  echo "DRY RUN    preflight passed; nothing was sent"
-  echo "  job        $JOB"
-  echo "  commit     $COMMIT_FULL   base $BASE_FULL   ${PROFILE:+profile $PROFILE}${SERVICES:+services $SERVICES}"
-  echo "  host       ${ZORA_QA_HOST:-(not configured)}   remote ${ZORA_QA_REMOTE_HOME:-(not configured)}/jobs/$JOB"
-  echo "  results    $JOBDIR"
-  exit 0
-fi
-
-[ -n "${ZORA_QA_HOST:-}" ] || refuse "ZORA_QA_HOST is not set (see $CONF)"
-[ -n "${ZORA_QA_REMOTE_HOME:-}" ] || refuse "ZORA_QA_REMOTE_HOME is not set (see $CONF)"
-[[ "$ZORA_QA_REMOTE_HOME" =~ ^/[A-Za-z0-9._/-]+$ ]] || refuse "ZORA_QA_REMOTE_HOME must be an absolute plain path"
-write_dispatch requested
-
-# ---------------------------------------------------------------- dispatch
-SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 "$ZORA_QA_HOST")
-REMOTE_JOB="$ZORA_QA_REMOTE_HOME/jobs/$JOB"
-"${SSH[@]}" true 2>/dev/null || failed "cannot reach $ZORA_QA_HOST over ssh"
-
-if [ -n "$SERVICES" ]; then SELECTION="--services '$SERVICES'"; else SELECTION="--profile '$PROFILE'"; fi
-STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
-cp "$HERE/qa-job.sh" "$HERE/codex-qa-prompt.md" "$HERE/verdict.schema.json" "$HERE/seed-baseline.cjs" "$HERE/qa-browser.cjs" "$HERE/redact-evidence.py" "$STAGE/"
-cp "$CHARTER" "$STAGE/qa-charter.md"
-COPYFILE_DISABLE=1 tar -czf - -C "$STAGE" . | "${SSH[@]}" "mkdir -p '$REMOTE_JOB/in' && tar -xzf - -C '$REMOTE_JOB/in'" \
-  || failed "could not upload the job bundle"
-"${SSH[@]}" "cd '$REMOTE_JOB' || exit 1; setsid nohup bash in/qa-job.sh --job '$JOB' --dir '$REMOTE_JOB' --repo '$REPO_URL' --base '$BASE_FULL' --commit '$COMMIT_FULL' $SELECTION > job.log 2>&1 < /dev/null & echo started" >/dev/null \
-  || failed "could not start the job on the VM"
-echo "STARTED    job $JOB on $ZORA_QA_HOST"
-
-DEADLINE=$(( $(date +%s) + ${ZORA_QA_TIMEOUT:-10800} ))
-LAST=""
-while :; do
-  STATUS="$("${SSH[@]}" "cat '$REMOTE_JOB/status' 2>/dev/null || echo starting" 2>/dev/null || echo unreachable)"
-  if [ "$STATUS" != "$LAST" ]; then echo "[$(date +%H:%M:%S)] $STATUS"; LAST="$STATUS"; fi
-  case "$STATUS" in done|failed) break ;; esac
-  [ "$(date +%s)" -lt "$DEADLINE" ] \
-    || { write_dispatch timeout; failed "timed out; the job may still be running on the VM in $REMOTE_JOB"; }
-  sleep "${ZORA_QA_POLL:-30}"
-done
-
-"${SSH[@]}" "cat '$REMOTE_JOB/result.tar.gz'" > "$JOBDIR/.download/result.tar.gz" \
-  || { write_dispatch download-failed; failed "could not download the results"; }
-if ! safe_extract "$JOBDIR/.download/result.tar.gz" "$JOBDIR"; then
-  write_dispatch rejected
-  failed "the result archive failed the safety checks; nothing was extracted, and it is kept unopened in $JOBDIR/.download/"
-fi
-write_dispatch "$STATUS"
-
-echo "RESULTS    $JOBDIR"
-echo "NEXT       bash ~/.claude/skills/zora-cycle/verdict-check.sh '$JOBDIR' --remote"
+# The immutable expected identity is persisted before any network upload.
+export ZORA_QA_HOST ZORA_QA_REMOTE_HOME ZORA_QA_WORKERS_FILE ZORA_QA_TIMEOUT ZORA_QA_POLL
+exec python3 "$HERE/qa-dispatch.py" submit --run "$RUN" --base "$BASE_FULL" \
+  --commit "$COMMIT_FULL" --profile "$PROFILE" --services "$SERVICES" \
+  --repo "$REPO_URL" --worker "$WORKER" --dry "$DRY"

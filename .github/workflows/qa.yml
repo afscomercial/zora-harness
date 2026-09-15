@@ -1,0 +1,27 @@
+name: QA harness regressions
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  qa-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n skills/zora-cycle/qa/qa-job.sh
+          bash -n skills/zora-cycle/qa/qa-network.sh
+          bash -n skills/zora-cycle/qa/install-worker.sh
+          bash -n skills/zora-cycle/qa/run-codex-qa
+          bash -n skills/zora-cycle/verdict-check.sh
+      - name: Offline regression tests
+        working-directory: skills/zora-cycle/qa
+        run: |
+          python3 -B test-runner.py
+          python3 -B test-worker.py
+          python3 -B test-dispatcher.py
+          python3 -B test-extractor.py
