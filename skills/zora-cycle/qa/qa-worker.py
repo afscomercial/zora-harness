@@ -23,7 +23,7 @@ DEFAULTS = {
     'isolation': 'none', 'driver': 'kind', 'subnet_base': '10.77',
     'queue_timeout': 7200, 'run_timeout': 14400, 'preparation_timeout': 5400, 'validation_timeout': 7200, 'cleanup_timeout': 240,
     'host_reserve_mb': 5000, 'slot_memory_mb': 13000, 'min_disk_gb': 60,
-    'process_memory_max_mb': 6000, 'cluster_memory_max_mb': 7000,
+    'process_memory_max_mb': 8000, 'cluster_memory_max_mb': 5000, 'turbo_concurrency': 2,
     'max_load_per_cpu': 2.0, 'poll_seconds': 5, 'retention_seconds': 21600,
     'identity_bundles': {}, 'profiles': {},
 }
@@ -85,7 +85,7 @@ class Worker:
             raise ValueError('subnet_base must be two IPv4 octets')
         for key in ('queue_timeout', 'run_timeout', 'preparation_timeout', 'validation_timeout', 'cleanup_timeout', 'host_reserve_mb',
                     'slot_memory_mb', 'min_disk_gb', 'process_memory_max_mb',
-                    'cluster_memory_max_mb', 'poll_seconds', 'retention_seconds'):
+                    'cluster_memory_max_mb', 'turbo_concurrency', 'poll_seconds', 'retention_seconds'):
             if not isinstance(c[key], (int, float)) or c[key] <= 0:
                 raise ValueError(f'{key} must be positive')
         minimum = c['process_memory_max_mb'] + c['cluster_memory_max_mb']
@@ -233,6 +233,7 @@ class Worker:
             'QA_PEER_IP': f"{self.cfg['subnet_base']}.{slot}.2",
             'QA_STAGING_ROOT': str(path / 'staging'),
             'QA_CLUSTER_MEMORY_MAX_MB': str(self.cfg['cluster_memory_max_mb']),
+            'TURBO_CONCURRENCY': str(self.cfg['turbo_concurrency']),
             'QA_AUTH_FILE': identity.get('auth_file', str(path / 'unconfigured-auth.json')),
             'QA_IDENTITY_FILE': identity.get('identity_file', str(path / 'unconfigured-identity.json')),
             'QA_QUEUED_SECONDS': str(int(time.time() - read(path / 'worker-state.json')['submitted_at'])),
@@ -413,7 +414,16 @@ class Worker:
             for name in ('memory.events', 'memory.peak', 'cpu.stat'):
                 file = Path('/sys/fs/cgroup') / group.lstrip('/') / name
                 if file.exists(): events[name] = file.read_text()
+        journal = command(['journalctl', '-u', record['unit'], '_COMM=systemd', '--no-pager', '-n', '30', '-o', 'json'])
+        system_events = []
+        for line in journal.stdout.splitlines():
+            try:
+                entry = json.loads(line)
+                system_events.append({'message': entry.get('MESSAGE'), 'timestamp': entry.get('__REALTIME_TIMESTAMP')})
+            except ValueError:
+                pass
         atomic(path / 'worker-telemetry.json', {'at': time.time(), 'unit': result.stdout,
+                                             'system_events': system_events,
                                              'cgroup_events': events,
                                              'disk_free_bytes': shutil.disk_usage(self.home).free})
 
@@ -482,7 +492,7 @@ class Worker:
             manifest = {k: d[k] for k in ('job_id', 'attempt_id', 'worker_id', 'environment_id',
                                          'commit', 'base', 'charter_sha256', 'bundle_sha256')}
             manifest.update(protocol_version=4, runner_version=4, staging_isolation_supported=d.get('staging_isolation_supported', False),
-                            environment={'ready': False, 'reason': reason}, codex={'ran': False}, files={})
+                            environment={'ready': False, 'reason': reason}, codex={'ran': (out / 'codex-events.jsonl').exists(), 'exit_code': None}, files={})
             for file in out.rglob('*'):
                 if file.is_file() and not file.is_symlink() and file.name != 'remote-manifest.json':
                     manifest['files'][str(file.relative_to(out))] = hashlib.sha256(file.read_bytes()).hexdigest()
@@ -513,7 +523,8 @@ class Worker:
                 if record['state'] == 'retained' and not expired and release != path.name:
                     continue
                 if self.status(path.name) not in TERMINAL:
-                    self.failure(path, self.dispatch(path), 'worker unit stopped before completion')
+                    self.telemetry(path, record)
+                    self.failure(path, self.dispatch(path), 'worker unit stopped before completion; see worker telemetry for OOM or termination evidence')
                 self.cleanup(record, release=expired or release == path.name)
                 self.package(path, self.dispatch(path))
         for path in self.jobs.iterdir():

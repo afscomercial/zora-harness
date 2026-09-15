@@ -336,8 +336,9 @@ Example worker configuration (paths hold sandbox credentials; never commit their
   "cleanup_timeout": 300,
   "slot_memory_mb": 13000,
   "host_reserve_mb": 5000,
-  "process_memory_max_mb": 6000,
-  "cluster_memory_max_mb": 7000,
+  "process_memory_max_mb": 8000,
+  "cluster_memory_max_mb": 5000,
+  "turbo_concurrency": 2,
   "identity_bundles": {
     "1": {"auth_file": "/root/zora-qa/auth.json", "identity_file": "/root/zora-qa/fixtures/identity.json"},
     "2": {"auth_file": "/root/zora-qa/auth.json", "identity_file": "/root/zora-qa/fixtures/identity.json"}
@@ -391,3 +392,10 @@ receives the account HOME explicitly so existing Git/Codex authentication remain
 available; secrets in `vm.env` are sourced before authoritative per-attempt settings.
 Run `qa-worker.py --home /root/zora-qa check` to validate installed settings. Use
 `release <attempt-id>` to release a retained environment after its unit finishes.
+
+QA workers default Turbo to two concurrent tasks via `TURBO_CONCURRENCY`, without
+changing Pantheon's Turbo configuration. A six-service trial reached validation but
+the initial 6,000 MiB process budget hit OOM during gates. The trial budget was
+rebalanced to 8,000 MiB processes plus 5,000 MiB cluster per 13,000 MiB slot. Treat
+these as profile-dependent trial settings until overlapping full QA passes. Worker
+telemetry includes systemd termination/OOM events, including after supervisor loss.
