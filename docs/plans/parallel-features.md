@@ -1,8 +1,8 @@
 # Parallel features in the zora harness
 
-Last reconciled: **2026-09-15**, against the QA implementation, regression tests and
-recorded VPS rollout. Status describes delivered code and observed tests, not a claim
-that every original acceptance criterion has passed.
+Last reconciled: **2026-09-15**, against the QA implementation, the Stage 1 lane
+implementation, regression tests and the recorded VPS rollout. Status describes delivered
+code and observed tests, not a claim that every original acceptance criterion has passed.
 
 ## Goal and current scope
 
@@ -56,7 +56,10 @@ Implementation sources: [dispatcher](../../skills/zora-cycle/qa/qa-dispatch.py),
 [network helper](../../skills/zora-cycle/qa/qa-network.sh),
 [installer](../../skills/zora-cycle/qa/install-worker.sh),
 [checker](../../skills/zora-cycle/verdict-check.sh), and
-[operator guide](../../skills/zora-cycle/qa/README.md).
+[operator guide](../../skills/zora-cycle/qa/README.md). Stage 1 lives in the
+[cycle skill](../../skills/zora-cycle/SKILL.md) and the
+[implementer](../../agents/zora-implementer.md) and
+[validator](../../agents/zora-validator.md) definitions.
 
 ## Implemented QA contracts
 
@@ -98,6 +101,7 @@ execution; no frozen checkout is patched to manufacture support.
 | Initial resource split | A real run hit the initial 6 GB process limit. Retuned to 8,000 MiB process + 5,000 MiB cluster, with `TURBO_CONCURRENCY=2` and sequential QA gates. |
 | Runner publishes terminal immediately | Managed runner hands off packaging; supervisor adds telemetry, cleanup state and redaction before final publication. Failed redaction withholds raw evidence. |
 | Independent collectors | Added a persistent per-attempt collection lock after observing a download/replacement race. |
+| Checker walked a malformed evidence value | `verdict-check.sh` iterated `evidence` directly, so a string produced one bogus "file missing" per character and read like a broken QA run. It now names the malformed verdict once (`f01664f`), with a regression test. |
 | Generic global-prune prohibition | Prompt/operator guides explicitly name `pnpm dev:tilt:clean`; that pre-existing developer shortcut remains unchanged and must not be used by QA. |
 | Full telemetry and maintenance service | Only the metrics and installer exclusion listed in Q6/Q10 are delivered; remaining work is tracked below. |
 
@@ -126,8 +130,10 @@ regressions must not automatically be dismissed as infrastructure failures.
 
 ## Stage 1 — Parallel lanes: implemented, not yet live-verified
 
-Delivered on `feat/parallel-lanes`; the verification at the end of this section has not
-been run. Two features plan, implement and gate in separate lane worktrees.
+Delivered in `78b1375` on `main`. Two features plan, implement and gate in separate lane
+worktrees. **The rest of this section is the specification as written before
+implementation**, kept as the record of what was asked for; the delivered code follows it.
+The verification at its end is only partly done — see the checklist there.
 QA already supports concurrent attempts; this stage must integrate with the existing
 protocol-v4 dispatcher, not reintroduce serial QA. Reuse Pantheon’s
 `.agents/skills/worktree-manager/scripts/create-worktree.sh` for creation and local
@@ -187,11 +193,23 @@ rationale keeps its other reasons but drops the single-checkout premise),
 `docs/HOW-IT-WORKS.md` (quick reference creates/enters the lane), `run-codex-qa`
 header.
 
-**Verify Stage 1**: create two lanes; the main checkout stays clean and `git worktree list`
-shows both; run gates in both concurrently; `run-codex-qa --dry-run` from inside lane A
-passes preflight (proves worktree resolution); `verdict-check.sh "$ATTEMPT" "$LANE_A" --remote`
-passes on a real job, and the same call from the main checkout without a repo-dir
-correctly reports a stale commit — proving the argument matters.
+**Verify Stage 1.** Done:
+
+- ✅ `verdict-check.sh "$RUN" "$LANE"` passes against a lane's HEAD, and the same call
+  with the argument omitted from the main checkout reports
+  `stale: the verdict is for 494ed756451f, HEAD is 525a4e9c590f` — proving the argument
+  matters. Exercised with a synthetic verdict, not yet a real remote job.
+- ✅ The `--git-common-dir` snippet resolves the main checkout from a nested directory
+  (`apps/web-app`), and `git worktree list` shows the repo's existing lanes.
+- ✅ `mkdir runs/.local-env-owner.d` refuses a second claim and is covered by the
+  `/runs/` gitignore rule.
+
+Remaining, needs two real lanes and the VPS:
+
+- ⬜ Create two lanes; the main checkout stays clean and `git worktree list` shows both.
+- ⬜ Run the gates in both concurrently.
+- ⬜ `run-codex-qa --dry-run` from inside lane A passes preflight.
+- ⬜ `verdict-check.sh "$ATTEMPT" "$LANE_A" --remote` passes on a real QA job.
 
 ---
 
@@ -208,7 +226,7 @@ Verified:
 - Default Tilt declarations and all 33 generated commands match the base with the
   override unset or empty. Pantheon lint (70 tasks), types (72 tasks), and three real
   Tilt evaluation/staging tests passed. QA changes require no developer configuration.
-- Harness regression suite: 20 runner, 18 worker, 14 dispatcher/checker, and three
+- Harness regression suite: 20 runner, 18 worker, 15 dispatcher/checker, and three
   extractor tests. Linux CI passes on the review branch.
 - Real systemd lifecycle tests passed: duplicate admission, queue, cancellation,
   supervisor SIGKILL, descendant cleanup, reaper packaging and slot release.
