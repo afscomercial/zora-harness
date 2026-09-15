@@ -347,6 +347,61 @@ Delivery order:
 Rollback: stop new admissions, drain or clean active environments, then configure one
 slot with `QA_NET_ISOLATION=none`. Do not switch isolation underneath live attempts.
 
+## QA rollout validation — 2026-09-15
+
+Implementation is on `codex/parallel-qa-environments` in both repositories:
+[Harness PR #1](https://github.com/afscomercial/zora-harness/pull/1) and
+[Pantheon PR #1897](https://github.com/HouseNumbers/zora-pantheon/pull/1897).
+The VPS worker is configured with two Kind/netns slots. Both slots use the existing
+QA identity; the user confirmed it supports concurrent logins.
+
+Verified:
+
+- Default Tilt declarations and all 33 generated commands match the base with the
+  override unset or empty. Pantheon lint (70 tasks), types (72 tasks), and three real
+  Tilt evaluation/staging tests passed. QA changes require no developer configuration.
+- Harness regression suite: 20 runner, 18 worker, 14 dispatcher/checker, and three
+  extractor tests. Linux CI passes on the review branch.
+- Real systemd lifecycle tests passed: duplicate admission, queue, cancellation,
+  supervisor SIGKILL, descendant cleanup, reaper packaging and slot release.
+- Two real Kind environments served different content on the same localhost port and
+  held different values under the same ConfigMap name. Deleting A preserved B.
+- A full single-slot Codex run passed all five QA rungs and the local evidence checker.
+
+The overlapping application trial uses two independent attempts at the same Pantheon
+commit, with api-gateway, user, loan-application, task, localstack and insurance-provider.
+Each tests an identical Mongo fixture ID with its own attempt value, authenticated
+browser sessions, staging rebuild isolation and a five-minute stability window.
+Both attempts passed all five QA rungs and the local evidence checker. Fifteen
+30-second observer samples recorded both attempts validating with healthy Kubernetes
+APIs, spanning more than seven minutes. B remained healthy after A's teardown.
+Both five-minute stability windows passed all 11 samples. Staging rebuilds in one
+scratch root preserved all 1,619 files in the other, including hashes and timestamps.
+
+Process memory peaked at 4.83 GiB (A) and 4.28 GiB (B), below the configured 8,000 MiB
+limit; neither reported an OOM. Cluster limits are 5,000 MiB each, slot reservations
+13,000 MiB each, and host reserve 5,000 MiB. These measurements cover the selected
+six-service pair only. Bootstrap is serialized; QA validation overlaps.
+
+Both manifests report clean teardown. Slot records, attempt units, private work/staging/
+scratch directories, Kind containers, network namespaces and owned firewall rules were
+released. The pre-existing stopped developer cluster was preserved; the reaper remains
+active.
+
+Observed concerns: initial Vite dependency 504s cleared on reload, and mongosh telemetry
+errors required a telemetry-disabled or MongoDB-driver sampling path. Both corrected
+stability runs passed without service restarts. The pre-existing developer
+`pnpm dev:tilt:clean` shortcut still performs global pruning; QA instructions explicitly
+prohibit it and direct cleanup through worker cancellation/release.
+
+Scope of this rollout: no second physical VPS, different-commit pair, all-services
+capacity certification, live reboot drill or full concurrent Docker image rebuild
+stress test has been performed. Inventory/routing, quarantine and retention have
+regression coverage; additional live acceptance work remains in section 2h.
+
+Keep ordinary developer workflows unchanged. Older Pantheon commits without the
+staging override run exclusively until the prerequisite is merged or cherry-picked.
+
 ## Risks and boundaries
 
 - Both agents initially run as root on a shared Docker host. This is collision isolation
