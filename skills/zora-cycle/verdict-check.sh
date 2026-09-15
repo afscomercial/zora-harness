@@ -73,6 +73,12 @@ if remote and m is None:
     print(f"INVALID     no remote-manifest.json in {run_dir}: the remote job never packaged its results")
     sys.exit(2)
 
+if m is not None:
+    for field in ("environment", "codex", "checkout", "files"):
+        if field in m and not isinstance(m[field], dict):
+            print(f"INVALID     remote manifest {field} must be an object")
+            sys.exit(2)
+
 def environment_problems():
     probs = []
     env, cx = m.get("environment") or {}, m.get("codex") or {}
@@ -86,50 +92,77 @@ def environment_problems():
         probs.append(f"INCOMPLETE (Codex run): exited with {cx.get('exit_code')!r}. Rerun the same commit")
     return probs
 
+def sandbox_problems():
+    probs = []
+    rel = "evidence/0-sandbox.json"
+    if (m.get("environment") or {}).get("sandbox_evidence") != rel or rel not in (m.get("files") or {}):
+        return ["sandbox identity evidence is missing or not checksummed"]
+    identity, _ = load(rel)
+    if identity is None:
+        return ["sandbox identity evidence is missing"]
+    attempt = (d or {}).get("attempt_id")
+    if identity.get("attempt_id") != attempt:
+        probs.append("sandbox identity belongs to a different attempt")
+    if identity.get("unit") != f"zora-qa-sandbox-{attempt}.service":
+        probs.append("sandbox unit belongs to a different attempt")
+    if identity.get("slice") != f"zora-qa-sandbox-{attempt}.slice":
+        probs.append("sandbox slice belongs to a different attempt")
+    remote_dir = (d or {}).get("remote_dir")
+    remote_home = (d or {}).get("remote_home")
+    if (not isinstance(remote_dir, str) or not isinstance(remote_home, str)
+            or not remote_home.startswith("/") or ".." in remote_home.split("/")
+            or remote_dir != remote_home + "/jobs/" + str(attempt)
+            or identity.get("docker_endpoint") != "unix://" + remote_dir + "/sandbox/docker.sock"):
+        probs.append("sandbox Docker endpoint is not the attempt's private socket")
+    if not isinstance(identity.get("daemon_id"), str) or not identity["daemon_id"].strip():
+        probs.append("sandbox Docker daemon identity is missing")
+    if not isinstance(identity.get("init_pid"), int) or isinstance(identity["init_pid"], bool) or identity["init_pid"] <= 0:
+        probs.append("sandbox init PID is missing or invalid")
+    namespaces, host = identity.get("namespaces"), identity.get("host_namespaces")
+    if not isinstance(namespaces, dict) or not isinstance(host, dict):
+        return probs + ["sandbox namespace evidence must contain observed sandbox and host IDs"]
+    for key, prefix in (("mount", "mnt"), ("net", "net"), ("pid", "pid"), ("uts", "uts"), ("ipc", "ipc")):
+        pattern = re.escape(prefix) + r":\[[0-9]+\]"
+        current, original = namespaces.get(key), host.get(key)
+        if (not isinstance(current, str) or not isinstance(original, str)
+                or not re.fullmatch(pattern, current) or not re.fullmatch(pattern, original)
+                or current == original):
+            probs.append(f"sandbox {key} namespace is missing, invalid or shared with host")
+    return probs
+
 def remote_problems():
     probs = []
-    version = m.get("runner_version")
-    protocol = m.get("protocol_version")
-    modern = protocol == 4 or version == 4 or (d or {}).get("protocol_version") == 4
-    if modern:
-        if protocol != 4 or version != 4 or (d or {}).get("protocol_version") != 4:
-            probs.append("QA protocol version mismatch; v4 cannot fall back to legacy checks")
-        for key in ("job_id", "attempt_id", "worker_id", "environment_id", "charter_sha256",
-                    "bundle_sha256", "repo"):
-            if key not in m or key not in (d or {}) or m.get(key) != (d or {}).get(key):
-                probs.append(f"QA identity mismatch or missing field: {key}")
-        # Early v4 runners represented inactive selectors as null/empty string.
-        # Normalize only those documented empty forms; reject absent fields and bad types.
-        def selection(record):
-            if "profile" not in record or "services" not in record:
-                return None
-            profile, services = record["profile"], record["services"]
-            if profile == "":
-                profile = None
-            if services is None:
-                services = []
-            if ((profile is not None and (not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9-]+", profile)))
-                    or not isinstance(services, list)
-                    or any(not isinstance(s, str) or not re.fullmatch(r"[a-z0-9-]+", s) for s in services)
-                    or bool(profile) == bool(services)):
-                return None
-            return profile, services
-        expected_selection, actual_selection = selection(d or {}), selection(m)
-        if expected_selection is None or actual_selection is None or expected_selection != actual_selection:
-            probs.append("QA identity mismatch or invalid profile/services selection")
-        expected_staging = (d or {}).get("staging_isolation_supported", False)
-        actual_staging = m.get("staging_isolation_supported", False)
-        if (not isinstance(expected_staging, bool) or not isinstance(actual_staging, bool)
-                or expected_staging != actual_staging):
-            probs.append("QA identity mismatch or invalid field: staging_isolation_supported")
-        for key in ("job_id", "attempt_id", "worker_id", "environment_id", "slot_id"):
-            if not isinstance(m.get(key), (str, int)) or str(m.get(key)) == "":
-                probs.append(f"QA identity missing: {key}")
-        for key in ("charter_sha256", "bundle_sha256"):
-            if not re.fullmatch(r"[0-9a-f]{64}", str(m.get(key) or "")):
-                probs.append(f"QA identity invalid digest: {key}")
-    elif version not in (1, 2, 3) or protocol is not None:
-        probs.append("unsupported runner/protocol version; legacy manifests must explicitly use runner version 1, 2 or 3")
+    if m.get("protocol_version") != 5 or m.get("runner_version") != 5 or (d or {}).get("protocol_version") != 5:
+        probs.append("QA protocol version mismatch; only protocol 5 is supported")
+    for key in ("job_id", "attempt_id", "worker_id", "environment_id", "charter_sha256",
+                "bundle_sha256", "repo", "execution_isolation"):
+        if key not in m or key not in (d or {}) or m.get(key) != (d or {}).get(key):
+            probs.append(f"QA identity mismatch or missing field: {key}")
+    if (d or {}).get("execution_isolation") != "sandbox" or m.get("execution_isolation") != "sandbox":
+        probs.append("QA execution must use the sandbox")
+    def selection(record):
+        if "profile" not in record or "services" not in record:
+            return None
+        profile, services = record["profile"], record["services"]
+        if ((profile is not None and (not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9-]+", profile)))
+                or not isinstance(services, list)
+                or any(not isinstance(s, str) or not re.fullmatch(r"[a-z0-9-]+", s) for s in services)
+                or bool(profile) == bool(services)):
+            return None
+        return profile, services
+    expected_selection, actual_selection = selection(d or {}), selection(m)
+    if expected_selection is None or actual_selection is None or expected_selection != actual_selection:
+        probs.append("QA identity mismatch or invalid profile/services selection")
+    for key in ("job_id", "attempt_id", "worker_id", "environment_id"):
+        if not isinstance(m.get(key), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", m[key]):
+            probs.append(f"QA identity missing or invalid: {key}")
+    if not re.fullmatch(r"[1-9][0-9]*", str(m.get("slot_id") or "")):
+        probs.append("QA slot identity missing or invalid")
+    for key in ("charter_sha256", "bundle_sha256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(m.get(key) or "")):
+            probs.append(f"QA identity invalid digest: {key}")
+    if (m.get("codex") or {}).get("ran") is True:
+        probs += sandbox_problems()
     mc = str(m.get("commit") or "")
     if mc != head:
         probs.append(f"the VM validated {mc[:12] or '(no commit)'}, but HEAD is {head[:12]}")

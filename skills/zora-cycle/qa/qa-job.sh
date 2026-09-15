@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qa-job.sh — runs ON THE QA VM, inside a managed slot or legacy exclusive mode.
+# qa-job.sh — runs ON THE QA VM, inside a supervised private sandbox.
 # run-codex-qa uploads a fresh copy with
 # every job, so the VM always runs the harness version that dispatched it.
 #
@@ -18,8 +18,7 @@
 #                            repo's seed-local-db skill
 #   cache/zora-pantheon.git  bare mirror, refreshed every job
 set -uo pipefail
-RUNNER_VERSION=3
-[ "${QA_MANAGED:-0}" = 1 ] && RUNNER_VERSION=4
+RUNNER_VERSION=5
 
 JOB="" DIR="" REPO="" BASE="" COMMIT="" PROFILE="" SERVICES=""
 while [ $# -gt 0 ]; do
@@ -46,20 +45,10 @@ if [ "${QA_MANAGED:-0}" != 1 ] && [ -f "$QA_HOME/vm.env" ]; then set -a; . "$QA_
 CODEX_BIN="${CODEX_BIN:-codex}"
 QA_MODEL="${QA_MODEL:-gpt-6-astra}"
 QA_EFFORT="${QA_EFFORT:-high}"
-QA_CLUSTER_DRIVER="${QA_CLUSTER_DRIVER:-k3d}"
-if [ "${QA_MANAGED:-0}" = 1 ]; then
-  QA_CLUSTER_DRIVER=kind
-  export ZORA_TILT_STAGING_ROOT="${QA_STAGING_ROOT:?managed QA requires QA_STAGING_ROOT}"
-fi
-# Unique names prevent cleanup from touching the user's existing cluster.
-QA_CLUSTER="zora-qa-${JOB,,}"
-if [ "${QA_MANAGED:-0}" = 1 ]; then
-  QA_CLUSTER="zora-qa-$(printf %s "$JOB" | sha256sum | cut -c1-24)"
-fi
-QA_CLUSTER="${QA_CLUSTER:0:35}"; QA_CLUSTER="${QA_CLUSTER%-}"  # k3d rejects names over 35 characters
-K3D_CLUSTER="$QA_CLUSTER"
+QA_CLUSTER_DRIVER=kind
+unset ZORA_TILT_STAGING_ROOT
+QA_CLUSTER="zora-qa-$(printf %s "$JOB" | sha256sum | cut -c1-24)"
 QA_CONTEXT="$QA_CLUSTER_DRIVER-$QA_CLUSTER"
-QA_STOP_SERVICES="${QA_STOP_SERVICES:-${QA_PAUSE_SERVICES:-}}"
 QA_NODE_IMAGE="${QA_NODE_IMAGE:-kindest/node:v1.35.0}"
 export TILT_PORT="${TILT_PORT:-10350}"
 export KUBECONFIG="$DIR/kubeconfig"
@@ -71,8 +60,6 @@ else
   TILT_ARGS=(); TILT_ENV=(env TILT_PROFILE="$PROFILE")
 fi
 CLUSTER_STARTED=false; TILT_STARTED=false
-K3D_REGISTRY="${K3D_REGISTRY:-zora-qa-registry}"
-K3D_REGISTRY_PORT="${K3D_REGISTRY_PORT:-5050}"
 TILT_READY_TIMEOUT="${TILT_READY_TIMEOUT:-2400}"
 # The browser uses localhost: Clerk returns there after sign-in (CLERK_AUTHORIZED_PARTIES),
 # so one host keeps the session cookies together. The dev server binds 127.0.0.1 only.
@@ -100,30 +87,7 @@ stop_group() {
   rm -f "$1"
 }
 
-stop_existing_clusters() {
-  python3 - <<'CLUSTERS'
-import json, subprocess
-ids = subprocess.check_output(['docker','ps','-q'], text=True).split()
-if ids:
-    containers = json.loads(subprocess.check_output(['docker','inspect',*ids], text=True))
-    for container in containers:
-        labels = container.get('Config',{}).get('Labels') or {}
-        if 'io.x-k8s.kind.cluster' in labels or 'k3d.cluster' in labels:
-            print('Stopping existing Kubernetes container: '+container['Name'].lstrip('/'), flush=True)
-            subprocess.run(['docker','stop','--time','30',container['Id']], check=True, stdout=subprocess.DEVNULL)
-CLUSTERS
-}
-
-prepare_exclusive_environment() {
-  if [ "${QA_MANAGED:-0}" != 1 ]; then
-  local unit
-  for unit in $QA_STOP_SERVICES; do
-    if systemctl is-active --quiet "$unit"; then
-      systemctl stop "$unit" || { env_fail "could not stop $unit"; return 1; }
-    fi
-  done
-  stop_existing_clusters || { env_fail "could not stop existing Kubernetes clusters"; return 1; }
-  fi
+check_private_ports() {
   # Refuse a stale server instead of accepting its HTTP response as job evidence.
   python3 - "$TILT_PORT" <<'PORTS'
 import socket, sys
@@ -138,47 +102,36 @@ for port in [int(sys.argv[1]), 5173, 27017, 30080, 30081, 30082, 30083, 30084, 3
 PORTS
 }
 
+prepare_browser() {
+  # Resolve the browser version from this exact checkout and install into private HOME.
+  export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"
+  QA_WORK="$WORK" node <<'BROWSER'
+const path = require('path');
+const { spawnSync } = require('child_process');
+const work = process.env.QA_WORK;
+const cli = require.resolve('@playwright/test/cli', { paths: [work, path.join(work, 'tests', 'b2b-e2e')] });
+const result = spawnSync(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exit(result.status === null ? 1 : result.status);
+BROWSER
+}
+
 create_cluster() {
   mkdir -p "$WORK/tilt/data/mongo"
-  case "$QA_CLUSTER_DRIVER" in
-    kind)
-      python3 - "$WORK" "$DIR/kind.json" <<'KIND'
-import json, os, sys
+  python3 - "$WORK" "$DIR/kind.json" <<'KIND'
+import json, sys
 work, target = sys.argv[1:]
 json.dump({'kind':'Cluster', 'apiVersion':'kind.x-k8s.io/v1alpha4',
-    **({'networking': {'apiServerAddress': os.environ['QA_HOST_IP']}} if os.environ.get('QA_MANAGED') == '1' and os.environ.get('QA_NET_ISOLATION') == 'netns' else {}),
+    'networking': {'apiServerAddress': '127.0.0.1'},
     'nodes':[{'role':'control-plane', 'extraMounts':[{
         'hostPath':work+'/tilt/data', 'containerPath':'/mnt/mac'+work+'/tilt/data'}]}]}, open(target,'w'))
 KIND
-      CLUSTER_STARTED=true
-      local host_net=()
-      if [ "${QA_MANAGED:-0}" = 1 ] && [ "${QA_NET_ISOLATION:-}" = netns ]; then
-        # Kind allocates its API port with a local bind before invoking host Docker.
-        host_net=(nsenter --net=/proc/1/ns/net)
-      fi
-      "${host_net[@]}" kind create cluster --name "$QA_CLUSTER" --image "$QA_NODE_IMAGE" \
-        --config "$DIR/kind.json" --kubeconfig "$KUBECONFIG" --wait 180s || return 1
-      if [ "${QA_MANAGED:-0}" = 1 ]; then
-        if [ -n "${QA_CLUSTER_MEMORY_MAX_MB:-}" ]; then
-          docker update --memory "${QA_CLUSTER_MEMORY_MAX_MB}m" --memory-swap "${QA_CLUSTER_MEMORY_MAX_MB}m" \
-            "$QA_CLUSTER-control-plane" || return 1
-        fi
-        kubectl --kubeconfig "$KUBECONFIG" --request-timeout=30s get --raw=/readyz || return 1
-      fi
-      ;;
-    k3d)
-      if ! k3d registry list "$K3D_REGISTRY" >/dev/null 2>&1; then
-        k3d registry create "$K3D_REGISTRY" --port "$K3D_REGISTRY_PORT" || return 1
-      fi
-      CLUSTER_STARTED=true
-      k3d cluster create "$QA_CLUSTER" --wait \
-        --registry-use "k3d-$K3D_REGISTRY:$K3D_REGISTRY_PORT" \
-        --volume "$WORK/tilt/data:/mnt/mac$WORK/tilt/data@server:0" \
-        --kubeconfig-update-default=false --kubeconfig-switch-context=false || return 1
-      k3d kubeconfig get "$QA_CLUSTER" > "$KUBECONFIG"
-      ;;
-    *) env_fail "unsupported QA_CLUSTER_DRIVER: $QA_CLUSTER_DRIVER"; return 1 ;;
-  esac
+  CLUSTER_STARTED=true
+  kind create cluster --name "$QA_CLUSTER" --image "$QA_NODE_IMAGE" \
+    --config "$DIR/kind.json" --kubeconfig "$KUBECONFIG" --wait 180s || return 1
+  docker update --memory "${QA_CLUSTER_MEMORY_MAX_MB}m" --memory-swap "${QA_CLUSTER_MEMORY_MAX_MB}m" \
+    "$QA_CLUSTER-control-plane" || return 1
+  kubectl --kubeconfig "$KUBECONFIG" --request-timeout=30s get --raw=/readyz || return 1
 }
 
 install_command_wrappers() {
@@ -225,7 +178,6 @@ prepare() {
   command -v "$CODEX_BIN" >/dev/null || { env_fail "Codex CLI is missing"; return 1; }
   "$CODEX_BIN" login status > "$EVID/0-codex-login.txt" 2>&1 \
     || { env_fail "Codex needs login: codex login --device-auth"; return 1; }
-  case "$QA_CLUSTER_DRIVER" in kind|k3d) ;; *) env_fail "unsupported cluster driver"; return 1 ;; esac
   command -v "$QA_CLUSTER_DRIVER" >/dev/null || { env_fail "$QA_CLUSTER_DRIVER is missing"; return 1; }
 
   # A disposable clone at the exact commit, detached, verified clean.
@@ -248,14 +200,8 @@ prepare() {
   [ -z "$(git -C "$WORK" status --porcelain)" ] \
     || { env_fail "the fresh checkout is not clean"; return 1; }
 
-  if [ "${QA_MANAGED:-0}" = 1 ]; then
-    if [ "${QA_NET_ISOLATION:-}" = netns ]; then
-    grep -q ZORA_TILT_STAGING_ROOT "$WORK/tilt/Tiltfile" || {
-      env_fail "commit lacks opt-in ZORA_TILT_STAGING_ROOT support; cannot run parallel QA"; return 1;
-    }
-    fi
-    mkdir -p "$ZORA_TILT_STAGING_ROOT" || return 1
-  fi
+  bash "$IN/qa-sandbox.sh" check "$DIR" || { env_fail "sandbox identity verification failed"; return 1; }
+  cp "$DIR/sandbox.json" "$EVID/0-sandbox.json" || return 1
 
   # Sandbox-only runtime files. Each must be gitignored, so they can never replace source.
   if [ -d "$QA_HOME/secrets" ]; then
@@ -283,12 +229,15 @@ prepare() {
   ( cd "$WORK" && pnpm install --frozen-lockfile ) > "$EVID/0-pnpm-install.log" 2>&1 \
     || { env_fail "pnpm install failed (evidence/0-pnpm-install.log)"; return 1; }
 
+  prepare_browser > "$EVID/0-browser-install.log" 2>&1 \
+    || { env_fail "private browser installation failed (evidence/0-browser-install.log)"; return 1; }
+
   # A fresh clone has no workspace dist files; lean Tilt profiles do not build them.
   ( cd "$WORK" && CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo build --filter="web-app^..." ) \
     > "$EVID/0-bootstrap-web-dependencies.log" 2>&1 \
     || { env_fail "web-app dependencies did not build (evidence/0-bootstrap-web-dependencies.log)"; return 1; }
 
-  prepare_exclusive_environment >> "$EVID/0-runner.log" 2>&1 \
+  check_private_ports >> "$EVID/0-runner.log" 2>&1 \
     || { env_fail "could not reserve QA ports (evidence/0-runner.log)"; return 1; }
   create_cluster >> "$EVID/0-cluster.log" 2>&1 \
     || { env_fail "fresh cluster creation failed (evidence/0-cluster.log)"; return 1; }
@@ -381,7 +330,7 @@ run_codex() {
     fi
   fi
   export QA_AUTH_ORIGINS="${QA_AUTH_ORIGINS:-}"
-  export QA_BROWSER_HELPER="$IN/qa-browser.cjs" QA_WORK="$WORK"
+  export QA_BROWSER_HELPER="$IN/qa-browser.cjs" QA_TEST_ENV_HELPER="$IN/qa-test-env.py" QA_WORK="$WORK"
 
   HEAD_BEFORE="$(git -C "$WORK" rev-parse HEAD)"
   [ -z "$(git -C "$WORK" status --porcelain --untracked-files=no)" ] && CLEAN_BEFORE=true
@@ -403,6 +352,7 @@ run_codex() {
     printf -- '- Approved authentication origins (exact origins only): %s\n' "${QA_AUTH_ORIGINS:-none}"
     printf -- '- Browser boundary helper ($QA_BROWSER_HELPER): `%s` (self-test: evidence/0-browser-boundary.json)\n' "$IN/qa-browser.cjs"
     printf -- '- Test data seeded by: %s\n' "$SEEDED"
+    printf -- '- CI test environment helper ($QA_TEST_ENV_HELPER): `%s` (test child process only)\n' "$IN/qa-test-env.py"
     printf -- '- Evidence directory ($QA_EVIDENCE_DIR): `%s`\n' "$EVID"
     printf -- '- Scratch directory ($QA_SCRATCH): `%s`\n' "$SCRATCH"
     printf '\n---\n\n'
@@ -431,6 +381,13 @@ finalize() {
     git -C "$WORK" status --porcelain --untracked-files=no > "$DIR/tracked-after.txt" 2>/dev/null
     git -C "$WORK" status --porcelain > "$EVID/0-checkout-after.txt" 2>/dev/null
   fi
+  if ! bash "$IN/qa-sandbox.sh" check "$DIR"; then
+    ENV_READY=false
+    ENV_REASON="sandbox identity changed before finalization"
+    # Do not issue tool commands against an unverified daemon/context.
+    CLUSTER_STARTED=false
+    TILT_STARTED=false
+  fi
   if $CLUSTER_STARTED; then
     kubectl --request-timeout=15s get pods -A -o json > "$EVID/0-pods-final.json" 2>/dev/null || true
     kubectl --request-timeout=15s get nodes -o json > "$EVID/0-nodes-final.json" 2>/dev/null || true
@@ -442,12 +399,9 @@ finalize() {
       stop_group "$DIR/tilt.pid"
     fi
     if $CLUSTER_STARTED && [ "${QA_KEEP_CLUSTER:-0}" != 1 ]; then
-      case "$QA_CLUSTER_DRIVER" in
-        kind) kind delete cluster --name "$QA_CLUSTER" >> "$EVID/0-cluster.log" 2>&1 ;;
-        k3d) k3d cluster delete "$QA_CLUSTER" >> "$EVID/0-cluster.log" 2>&1 ;;
-      esac
+      kind delete cluster --name "$QA_CLUSTER" >> "$EVID/0-cluster.log" 2>&1
     fi
-    # QA owns this dedicated VM. Never restart previous services or clusters.
+    # Only the private daemon is reachable; the supervisor removes the sandbox.
   fi
   cp "$DIR/job.log" "$EVID/0-job.log" 2>/dev/null
   find "$OUT" -type l -delete
@@ -520,9 +474,9 @@ if e.get("QA_MANAGED") == "1":
         manifest[key] = dispatch[key]
     manifest["slot_id"] = e["QA_SLOT_ID"]
     manifest["services"] = e.get("M_SERVICES", "").split()
-    manifest["staging_isolation_supported"] = dispatch.get("staging_isolation_supported", False)
+    manifest["execution_isolation"] = "sandbox"
     manifest["environment"].update(slot_id=e["QA_SLOT_ID"], isolation=e["QA_NET_ISOLATION"],
-        staging_root=e["ZORA_TILT_STAGING_ROOT"], retained=e.get("QA_KEEP_CLUSTER") == "1",
+        sandbox_evidence="evidence/0-sandbox.json", retained=e.get("QA_KEEP_CLUSTER") == "1",
         health_evidence="evidence/0-nodes-final.json", images_evidence="evidence/0-pods-final.json")
 json.dump(manifest, open(os.path.join(out, "remote-manifest.json"), "w"), indent=2)
 PY
@@ -540,58 +494,19 @@ PY
 remove_checkout() {
   if [ "${QA_KEEP_WORK:-0}" = 1 ] || [ "${QA_KEEP_CLUSTER:-0}" = 1 ]; then return; fi
   rm -rf -- "$WORK" "$SCRATCH"
-  if [ "${QA_MANAGED:-0}" = 1 ]; then rm -rf -- "$ZORA_TILT_STAGING_ROOT"; fi
 }
 
-# Under the lock, before building: keep the newest QA_KEEP_JOBS job folders (their
-# evidence only), delete older ones, and trim Docker's dangling images and old build cache.
-prune_old_jobs() {
-  local keep="${QA_KEEP_JOBS:-10}" self n=0 j
-  [[ "$keep" =~ ^[0-9]+$ ]] || keep=10
-  self="$(cd "$DIR" && pwd)"
-  while IFS= read -r j; do
-    [ "$j" = "$self" ] && continue
-    n=$((n + 1))
-    if [ "$n" -gt "$keep" ]; then rm -rf -- "$j"; log "pruned old job $(basename "$j")"
-    else rm -rf -- "$j/work" "$j/scratch"; fi
-  done < <(find "$QA_HOME/jobs" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
-  docker image prune -f >> "$EVID/0-runner.log" 2>&1 || true
-  docker builder prune -f --filter until=168h >> "$EVID/0-runner.log" 2>&1 || true
-}
-
-# Managed jobs execute every local process in their own network namespace.
-# The supervisor owns slot locks and crash recovery; legacy jobs keep their single lock.
-if [ "${QA_MANAGED:-0}" = 1 ]; then
-  case "${QA_NET_ISOLATION:-}" in
-    netns) ;;
-    none) [ "${QA_SLOTS:-}" = 1 ] || { echo "isolation=none requires exactly one slot" >&2; exit 2; } ;;
-    *) echo "unsupported managed isolation" >&2; exit 2 ;;
-  esac
+# --- entrypoint ---
+# Direct execution on the host is never a supported fallback.
+if [ "${QA_MANAGED:-0}" != 1 ] || [ "${QA_SANDBOX:-0}" != 1 ]; then
+  echo "QA requires a supervised private sandbox" >&2; exit 2
 fi
-if [ "${QA_MANAGED:-0}" = 1 ] && [ "${QA_NET_ISOLATION:-}" = netns ] && [ "${QA_INSIDE_NETNS:-0}" != 1 ]; then
-  network="$IN/qa-network.sh"
-  bash "$network" up || exit 1
-  trap '[ "${QA_KEEP_CLUSTER:-0}" = 1 ] || bash "$network" down' EXIT
-  ip netns exec "$QA_NS" env QA_INSIDE_NETNS=1 bash "$IN/qa-job.sh" \
-    --job "$JOB" --dir "$DIR" --repo "$REPO" --base "$BASE" --commit "$COMMIT" \
-    --profile "$PROFILE" --services "$SERVICES" &
-  child=$!
-  trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 143' TERM INT
-  wait "$child"
-  exit $?
-fi
-if [ "${QA_MANAGED:-0}" = 1 ]; then
-  LOCKED=true
-else
-  exec 9> "$QA_HOME/.qa.lock"
-  if flock -n 9; then LOCKED=true
-  else ENV_REASON="another QA job holds the VM; rerun when it finishes"; fi
-fi
+bash "$IN/qa-sandbox.sh" check "$DIR" || exit 2
+LOCKED=true
 trap finalize EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 set_status preparing
-if $LOCKED && [ "${QA_MANAGED:-0}" != 1 ]; then prune_old_jobs; fi
 if $LOCKED; then
   exec 8> "$QA_HOME/.qa-build.lock"
   if flock -w "${QA_BUILD_WAIT_SECONDS:-7200}" 8; then

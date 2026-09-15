@@ -23,7 +23,7 @@
 <div class="eyebrow">03 / VPS execution & acceptance</div><h1>A fresh environment for each commit</h1><p class="intro">The VPS persists. Each QA job creates its own Kubernetes cluster and removes it when finished.</p>
 <div class="stages">
 <div class="stage"><div class="number">01</div><h2>Freeze & dispatch</h2><p>Rebase, rerun gates, push the exact SHA. Send the clean QA charter over SSH.</p></div>
-<div class="stage"><div class="number">02</div><h2>Reserve & prepare</h2><p>Queue for one of two slots. Bootstrap serially: private Kind, Tilt, network, staging and seeded data.</p></div>
+<div class="stage"><div class="number">02</div><h2>Reserve & prepare</h2><p>Queue for one of two slots. Bootstrap serially: sandbox, private Docker, Kind, normal Tilt and seeded data.</p></div>
 <div class="stage"><div class="number">03</div><h2>Try to break it</h2><p>Ready slots validate concurrently: tests, APIs, persisted data and authenticated browser behavior.</p></div>
 <div class="stage"><div class="number">04</div><h2>Clean & publish</h2><p>Clean only owned resources, release the slot and publish evidence. Failed cleanup quarantines capacity.</p></div>
 </div><div class="verdicts">
@@ -38,7 +38,7 @@
 <div class="qa-route"><div class="qa-node"><strong>Claude lead</strong><p>Push the frozen SHA. Send acceptance criteria and the QA charter.</p></div><div class="qa-arrow" aria-label="SSH dispatch">→</div><div class="qa-node"><strong>VPS runner</strong><p>Reserve a slot. Check out the commit. Bootstrap isolated Kind, Tilt and seeded data.</p></div></div>
 <p class="qa-down">↓ Codex starts inside the VPS</p>
 <div class="qa-route"><div class="qa-node"><strong>Lead judges</strong><p>Check the manifest and evidence. Confirm defects before requesting fixes.</p></div><div class="qa-arrow" aria-label="Return evidence">←</div><div class="qa-node"><strong>Codex Astra</strong><p>Run the validation ladder. Return verdict.json, logs and evidence.</p></div></div>
-<p class="qa-detail-note">Two slots validate concurrently; bootstrap is serialized. Each owns its database, network, Tilt state and staging. Cleanup leaves neighboring attempts running.</p>
+<p class="qa-detail-note">Two slots validate concurrently; bootstrap is serialized. Each owns its Docker daemon, database, processes, network, temporary files and HOME. Cleanup leaves neighboring attempts running.</p>
 </div><ol class="qa-ladder">
 <li><strong>Static gates</strong><p>Lint and type checks on the exact checkout.</p></li>
 <li><strong>Unit and integration tests</strong><p>Affected packages and relevant dependents. Check that tests detect broken behavior.</p></li>
@@ -59,9 +59,9 @@ verdict-check.sh "$ATTEMPT" "$PWD" --remote</pre>
 <p class="note">Use the printed absolute attempt directory. Collection never redispatches. To stop it deliberately: <code>run-codex-qa --cancel "$ATTEMPT"</code>.</p>
 <h2>Recovery and cleanup</h2><p class="ops-copy">systemd supervises each attempt. A reaper recovers interrupted jobs. Failed cleanup quarantines the slot; retained environments hold capacity until release or expiry.</p>
 </div><div>
-<h2>Regular Tilt stays unchanged</h2><p class="ops-copy">The <a href="https://github.com/HouseNumbers/zora-pantheon/pull/1897">Pantheon staging prerequisite</a> is opt-in. Feature commits without it run exclusively. QA must never invoke global Docker pruning or <code>dev:tilt:clean</code>.</p>
-<h2>Verified rollout</h2><p class="ops-copy">Two six-service environments passed all five QA rungs, including login and database isolation. Both cleaned up without OOM events; B remained healthy after A finished.</p>
-<p class="note">The live pair used the same commit. Larger profiles, different-commit pairs and a second physical VPS remain unverified. Worker selection is explicit; automatic cross-worker balancing is not implemented.</p>
+<h2>Regular Tilt stays unchanged</h2><p class="ops-copy">No Pantheon changes. Protocol 5 runs original commits inside mandatory sandboxes with private Docker and normal Tilt paths. No staging prerequisite or serial remote fallback.</p>
+<h2>Scoped isolation proof passed</h2><p class="ops-copy">Two original commits ran in private-Docker sandboxes. Removing A left B’s API, web and Kubernetes healthy; a third job admitted after slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown.</p>
+<p class="note">Runtime isolation and real supervisor integration pass; two sandbox slots are installed. Six-service scope only. A’s later browser observer had two transient failures (49/51 healthy), then recovered. Broader capacity, retention/reboot and a second VPS remain unverified. Worker selection is explicit; automatic cross-worker balancing is not implemented.</p>
 <p class="note"><a href="plans/parallel-features.md">Rollout record</a> · <a href="../skills/zora-cycle/qa/README.md">Operator guide</a></p>
 </div></div></section>
 </main>

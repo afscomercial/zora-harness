@@ -16,20 +16,13 @@ import time
 import uuid
 
 HERE = Path(__file__).resolve().parent
-BUNDLE = ('qa-job.sh', 'qa-network.sh', 'codex-qa-prompt.md', 'verdict.schema.json',
-          'seed-baseline.cjs', 'qa-browser.cjs', 'redact-evidence.py')
+BUNDLE = ('qa-job.sh', 'qa-network.sh', 'qa-sandbox.sh', 'codex-qa-prompt.md', 'verdict.schema.json',
+          'seed-baseline.cjs', 'qa-browser.cjs', 'redact-evidence.py', 'qa-test-env.py')
 
 
 def canonical_hash(files):
     return hashlib.sha256(''.join(name + '\0' + hashlib.sha256(data).hexdigest() + '\n'
                                   for name, data in sorted(files.items())).encode()).hexdigest()
-
-
-def staging_supported(commit, repo=None):
-    """Inspect the frozen commit, never mutable checkout contents."""
-    result = subprocess.run(['git', 'show', commit + ':tilt/Tiltfile'], cwd=repo,
-                            capture_output=True, check=False)
-    return result.returncode == 0 and b'ZORA_TILT_STAGING_ROOT' in result.stdout
 
 
 def worker_selection(selected):
@@ -56,9 +49,9 @@ def worker_selection(selected):
 
 
 def validate_route(host, home):
-    if not host or host.startswith('-') or any(c.isspace() for c in host):
+    if not isinstance(host, str) or not host or host.startswith('-') or any(c.isspace() for c in host):
         raise ValueError('worker host must be an SSH destination')
-    if not re.fullmatch(r'/[A-Za-z0-9._/-]+', home) or '..' in Path(home).parts:
+    if not isinstance(home, str) or not re.fullmatch(r'/[A-Za-z0-9._/-]+', home) or '..' in Path(home).parts:
         raise ValueError('worker home must be an absolute plain path')
 
 
@@ -74,10 +67,21 @@ def worker_command(d, action):
     return shlex.join(['python3', home + '/qa-worker.py', '--home', home, action, target])
 
 
+def validate_attempt(d):
+    if not isinstance(d, dict) or d.get('protocol_version') != 5 or d.get('execution_isolation') != 'sandbox':
+        raise ValueError('only protocol 5 sandbox attempts are supported')
+    for key in ('attempt_id', 'job_id', 'worker_id', 'environment_id'):
+        if not isinstance(d.get(key), str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', d[key]):
+            raise ValueError('invalid attempt identity: ' + key)
+    validate_route(d.get('host'), d.get('remote_home'))
+    expected = d['remote_home'] + '/jobs/' + d['attempt_id']
+    if d.get('remote_dir') != expected or d['environment_id'] != d['attempt_id']:
+        raise ValueError('remote attempt path/identity does not match its recorded worker')
+
+
 def status(d):
-    if d.get('protocol_version') == 4:
-        return ssh(d, worker_command(d, 'status')).decode().strip()
-    return ssh(d, 'cat ' + shlex.quote(d['remote_dir'] + '/status')).decode().strip()
+    validate_attempt(d)
+    return ssh(d, worker_command(d, 'status')).decode().strip()
 
 
 def collect(directory, d):
@@ -120,15 +124,7 @@ def _collect_locked(directory, d, state):
 def reconnect(action, path):
     directory = Path(path).resolve()
     d = json.loads((directory / 'dispatch.json').read_text())
-    if d.get('protocol_version') != 4:
-        if action == '--cancel':
-            raise ValueError('legacy jobs cannot be safely cancelled through the worker supervisor')
-        home = str(Path(d['remote_dir']).parent.parent)
-    else:
-        home = d['remote_home']
-    validate_route(d['host'], home)
-    if not d['remote_dir'].startswith(home + '/jobs/'):
-        raise ValueError('remote attempt directory is outside the recorded worker')
+    validate_attempt(d)
     if action == '--collect':
         collect(directory, d)
     elif action == '--status':
@@ -144,13 +140,13 @@ def submit(args):
     directory.mkdir(parents=True)
     files = {name: (HERE / name).read_bytes() for name in BUNDLE}
     files['qa-charter.md'] = (Path(args.run) / 'qa-charter.md').read_bytes()
-    d = dict(protocol_version=4, job_id=job, attempt_id=attempt, environment_id=attempt,
+    d = dict(protocol_version=5, job_id=job, attempt_id=attempt, environment_id=attempt,
              worker_id=worker['id'], host=worker['host'], remote_home=worker['home'],
              remote_dir=worker['home'] + '/jobs/' + attempt, base=args.base,
              commit=args.commit, repo=args.repo, profile=args.profile or None,
              services=args.services.split(), charter_sha256=hashlib.sha256(files['qa-charter.md']).hexdigest(),
              bundle_sha256=canonical_hash(files), requested_at=time.time(),
-             staging_isolation_supported=staging_supported(args.commit))
+             execution_isolation='sandbox')
     encoded = json.dumps(d, indent=2).encode()
     expected = directory / 'dispatch.json'
     with expected.open('xb') as out:

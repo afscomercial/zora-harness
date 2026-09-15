@@ -62,26 +62,32 @@ charter, and `run-codex-qa` sends an immutable attempt over SSH to a selected wo
 Codex (`gpt-6-astra`) runs the validation ladder; the lead checks the downloaded
 verdict and evidence with `verdict-check.sh --remote` before making the final call.
 
-The current VPS has **two QA slots**:
+The replacement worker uses **protocol 5 with mandatory per-attempt sandboxes**.
+Two slots remain the initial capacity target:
 
-- Each attempt owns its checkout, Kind cluster, database, network namespace, Tilt
-  state, and staging directories. Both slots use the same approved test account
-  with separate browser sessions.
-- Environment bootstrap is serialized to control resource usage. Once ready,
-  attempts can validate concurrently; additional attempts wait for capacity.
-- QA survives an SSH disconnect. Use `--status`, `--collect`, or `--cancel` with the
-  printed attempt directory to reconnect to the same attempt.
-- Cleanup releases the slot. Failed cleanup quarantines it; a systemd reaper
-  recovers interrupted attempts without touching neighboring environments.
+- Each attempt owns a checkout, Kind cluster and database, private process/network
+  namespaces, `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, HOME and tool state.
+- Each sandbox owns its Docker daemon, socket and storage. Existing Tilt staging
+  paths and image tags stay inside that sandbox, including during rebuilds and pruning.
+- Bootstrap is serialized to control resource peaks; ready attempts can validate
+  concurrently. Further attempts queue. Aggregate sandbox memory includes the
+  runner, browser, Docker/BuildKit and Kubernetes; capacity is measured for the tested six-service profile; other combinations need validation.
+- SSH disconnection does not cancel the attempt. `--status`, `--collect` and
+  `--cancel` reconnect using the printed attempt directory.
+- Ownership-based cleanup, quarantine and the reaper remain in the supervisor.
 
-Regular developer Tilt behavior is unchanged. Feature branches need the opt-in
-[Pantheon staging prerequisite](https://github.com/HouseNumbers/zora-pantheon/pull/1897)
-for parallel QA; commits without it run exclusively. This is a separate prerequisite
-from installing the harness symlinks.
+**No Pantheon changes or staging prerequisite are required.** The harness tests the
+original pushed commit with its normal Tilt configuration. New remote execution has
+no serial compatibility fallback or staging-support marker. The existing local
+validator fallback remains part of the lane workflow when remote QA is unavailable.
 
-Worker inventory supports explicit selection of additional VPSs; automatic balancing
-across workers is not implemented. Two overlapping six-service environments passed
-live QA; larger service combinations and a second physical VPS remain unverified.
+Explicit worker inventory supports additional VPSs; automatic balancing is not
+implemented. The earlier two-slot six-service proof used the superseded shared-Docker
+and Pantheon staging approach. Protocol-5 runtime isolation and supervisor integration now pass, and two sandbox
+slots are installed. Scoped isolation now passes for two distinguishable original commits using the
+six-service profile: A was removed while B's API, web and Kubernetes remained healthy;
+a third job admitted only after slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown. Supplemental A browser monitoring had two transient failures (49/51 healthy),
+then recovered; capacity beyond this profile and a second VPS remain unverified.
 
 See the [QA setup and operator guide](skills/zora-cycle/qa/README.md),
 [detailed flow](docs/HOW-IT-WORKS.md#qa-on-an-isolated-vm), and
@@ -132,8 +138,7 @@ this harness stays out of that repository.
 ## Relationship to the repo
 
 The harness reads and composes these repository instructions and tools. Its
-installation adds no repository files; parallel QA separately requires the opt-in
-Tilt prerequisite described above:
+installation and remote QA require no repository changes:
 
 - `AGENTS.md` — structure, commands, Definition of Done
 - `.agents/skills/orchestrate` — the full pipeline `zora-cycle` is the light sibling of

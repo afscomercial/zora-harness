@@ -15,12 +15,12 @@ import subprocess
 import sys
 import time
 
-PROTOCOL = 4
+PROTOCOL = 5
 ID = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$')
 TERMINAL = {'done', 'failed', 'cancelled'}
 DEFAULTS = {
-    'protocol_version': 4, 'worker_id': 'vps-1', 'slots': 1,
-    'isolation': 'none', 'driver': 'kind', 'subnet_base': '10.77',
+    'protocol_version': 5, 'worker_id': 'vps-1', 'slots': 2,
+    'isolation': 'sandbox', 'driver': 'kind', 'subnet_base': '10.77',
     'queue_timeout': 7200, 'run_timeout': 14400, 'preparation_timeout': 5400, 'validation_timeout': 7200, 'cleanup_timeout': 240,
     'host_reserve_mb': 5000, 'slot_memory_mb': 13000, 'min_disk_gb': 60,
     'process_memory_max_mb': 8000, 'cluster_memory_max_mb': 5000, 'turbo_concurrency': 2,
@@ -76,8 +76,8 @@ class Worker:
             raise ValueError('unsupported worker protocol or worker ID')
         if not isinstance(c['slots'], int) or not 1 <= c['slots'] <= 250:
             raise ValueError('slots must fit the configured /24-per-slot address pool (1..250)')
-        if c['isolation'] not in {'none', 'netns'} or (c['isolation'] == 'none' and c['slots'] != 1):
-            raise ValueError('multiple slots require netns isolation')
+        if c['isolation'] != 'sandbox':
+            raise ValueError('protocol 5 requires sandbox isolation')
         if c['driver'] != 'kind':
             raise ValueError('managed worker currently supports Kind only')
         octets = c['subnet_base'].split('.')
@@ -112,6 +112,10 @@ class Worker:
         d = read(path / 'in/dispatch.json')
         if not isinstance(d, dict) or d.get('protocol_version') != PROTOCOL:
             raise ValueError('unsupported dispatch protocol')
+        if d.get('execution_isolation') != 'sandbox':
+            raise ValueError('dispatch requires sandbox isolation')
+        if not (path / 'in/qa-sandbox.sh').is_file():
+            raise ValueError('sandbox helper missing from bundle')
         for key in ('job_id', 'attempt_id', 'worker_id', 'environment_id'):
             if not isinstance(d.get(key), str) or not ID.fullmatch(d[key]):
                 raise ValueError(f'invalid {key}')
@@ -198,8 +202,6 @@ class Worker:
         reservations = sum(r['memory_mb'] for r in self.records() if r)
         reserve = self.cfg['host_reserve_mb']
         reasons = []
-        if any(r.get('exclusive') for r in self.records() if r):
-            reasons.append('exclusive legacy environment')
         if reservations + budget + reserve > mem['MemTotal']:
             reasons.append('reserved memory')
         if mem['MemAvailable'] < budget + reserve:
@@ -226,12 +228,13 @@ class Worker:
         env = {
             'QA_MANAGED': '1', 'QA_SLOT_ID': str(slot), 'QA_WORKER_ID': d['worker_id'],
             'QA_ENVIRONMENT_ID': d['environment_id'], 'QA_JOB_ID': d['job_id'],
-            'QA_ATTEMPT_ID': d['attempt_id'], 'QA_NET_ISOLATION': self.cfg['isolation'],
+            'QA_ATTEMPT_ID': d['attempt_id'], 'QA_NET_ISOLATION': 'netns',
+            'QA_EXECUTION_ISOLATION': 'sandbox',
+            'QA_SANDBOX_MEMORY_MB': str(self.cfg['process_memory_max_mb'] + self.cfg['cluster_memory_max_mb']),
             'QA_SLOTS': str(self.cfg['slots']), 'QA_CLUSTER_DRIVER': 'kind',
             'QA_NS': 'qa-' + hashlib.sha256(d['attempt_id'].encode()).hexdigest()[:10],
             'QA_HOST_IP': f"{self.cfg['subnet_base']}.{slot}.1",
             'QA_PEER_IP': f"{self.cfg['subnet_base']}.{slot}.2",
-            'QA_STAGING_ROOT': str(path / 'staging'),
             'QA_CLUSTER_MEMORY_MAX_MB': str(self.cfg['cluster_memory_max_mb']),
             'TURBO_CONCURRENCY': str(self.cfg['turbo_concurrency']),
             'QA_AUTH_FILE': identity.get('auth_file', str(path / 'unconfigured-auth.json')),
@@ -255,20 +258,43 @@ class Worker:
                 self._execute(path, d)
             except Exception as exc:
                 print(f'worker exception: {exc}', flush=True)
-                self.stop_children(unit_name(path.name))
-                self.failure(path, d, str(exc))
+                self.recover_failed_execution(path)
+                # Unexpected failures cannot establish whether output writers stopped.
+                # Export only supervisor-created evidence, even if recovery succeeds.
+                self.failure(path, d, 'unexpected worker failure; see supervisor log', unsafe=True)
                 raise
 
+    def recover_failed_execution(self, path):
+        try:
+            self.stop_children(unit_name(path.name))
+        except Exception:
+            pass  # Sandbox cleanup owns the separate aggregate cgroup as well.
+        try:
+            for file in self.slots.glob('*.json'):
+                with lock(file.with_suffix('.lock'), False) as acquired:
+                    if acquired is None:
+                        continue  # Preserve the reservation for its owner/reaper.
+                    record = read(file)
+                    if record and record.get('attempt_id') == path.name:
+                        self.cleanup(record, release=True)
+        except Exception:
+            # Do not free an unverified reservation or inspect live runner output.
+            print('exception recovery incomplete; ownership retained for reaper', flush=True)
+
     def _execute(self, path, d):
+        # Tracebacks retain local variables: explicitly close slot handles before an
+        # outer exception handler tries to recover that same slot under its lock.
+        with contextlib.ExitStack() as held:
+            self._execute_owned(path, d, held)
+
+    def _execute_owned(self, path, d, held):
         profile_budget = self.cfg['profiles'].get(d.get('profile'), self.cfg['slot_memory_mb'])
-        exclusive = d.get('staging_isolation_supported') is not True
         deadline = read(path / 'worker-state.json')['submitted_at'] + self.cfg['queue_timeout']
         slot_file = None
         record = None
         while time.time() < deadline:
             with lock(self.guard):
                 reasons = self.admission(profile_budget)
-                if exclusive and self.records(): reasons.append('legacy commit requires all slots idle')
                 if not reasons and not self.earlier_waiter(path):
                     for slot in range(1, self.cfg['slots'] + 1):
                         if (self.slots / f'{slot}.json').exists():
@@ -280,11 +306,10 @@ class Worker:
                             handle.close()
                             continue
                         slot_file = handle
+                        held.callback(handle.close)
                         env = self.environment(path, slot, d)
-                        if exclusive:
-                            env.update(QA_NET_ISOLATION='none', QA_SLOTS='1')
                         record = {'attempt_id': path.name, 'slot_id': slot, 'memory_mb': profile_budget,
-                                  'unit': unit_name(path.name), 'created_at': time.time(), 'state': 'reserved', 'exclusive': exclusive,
+                                  'unit': unit_name(path.name), 'created_at': time.time(), 'state': 'reserved',
                                   'env': env}
                         atomic(self.slots / f'{slot}.json', record)
                         atomic(path / 'ownership.json', record)
@@ -297,43 +322,52 @@ class Worker:
         if not record:
             self.failure(path, d, 'capacity queue timeout; Codex did not run')
             return
+        failure_reason = None
         try:
-            process_limit = self.cfg['process_memory_max_mb']
-            result = command(['systemctl', 'set-property', '--runtime', unit_name(path.name),
-                              f'MemoryMax={process_limit}M', 'MemoryAccounting=yes', 'CPUAccounting=yes'])
+            helper = str(path / 'in/qa-sandbox.sh')
+            started = time.monotonic()
+            result = subprocess.run(['bash', helper, 'start', str(path)],
+                                    env=os.environ | record['env'], text=True, capture_output=True, timeout=240)
             if result.returncode:
-                raise RuntimeError('could not apply process resource budget: ' + result.stderr)
-            args = ['bash', str(path / 'in/qa-job.sh'), '--job', path.name, '--dir', str(path),
-                    '--repo', d['repo'], '--base', d['base'], '--commit', d['commit']]
+                raise RuntimeError('sandbox startup failed; inspect private sandbox logs')
+            args = ['bash', helper, 'exec', str(path), 'bash', str(path / 'in/qa-job.sh'),
+                    '--job', path.name, '--dir', str(path), '--repo', d['repo'],
+                    '--base', d['base'], '--commit', d['commit']]
             args += ['--services', ' '.join(d['services'])] if d.get('services') else ['--profile', d['profile']]
+            launch = ['bash', '-c', 'set -a; [ ! -f "$1" ] || source "$1"; shift; exec env "$@"',
+                      'qa-managed', str(self.home / 'vm.env')]
+            launch += [k + '=' + v for k, v in record['env'].items()] + args
             with (path / 'job.log').open('a') as output:
-                try:
-                    launch = ['bash', '-c', 'set -a; [ ! -f "$1" ] || source "$1"; shift; exec env "$@"', 'qa-managed', str(self.home / 'vm.env')] + [k + '=' + v for k, v in record['env'].items()] + args
-                    process = subprocess.Popen(launch, stdout=output, stderr=subprocess.STDOUT, close_fds=True)
-                    phase, phase_start, started = 'preparing', time.monotonic(), time.monotonic()
-                    while process.poll() is None:
-                        now = time.monotonic()
-                        state = self.status(path.name)
-                        if state != phase:
-                            phase, phase_start = state, now
-                        phase_limit = self.cfg['validation_timeout'] if phase == 'validating' else self.cfg['preparation_timeout']
-                        if now - started > self.cfg['run_timeout'] or now - phase_start > phase_limit:
-                            process.kill()
-                            process.wait()
-                            raise subprocess.TimeoutExpired(launch, now - started)
-                        time.sleep(1)
-                    result = subprocess.CompletedProcess(launch, process.returncode)
-                except subprocess.TimeoutExpired:
-                    self.stop_children(record['unit'])
-                    self.failure(path, d, 'execution deadline exceeded')
-                else:
-                    if result.returncode or not (path / 'result.tar.gz').exists():
-                        self.stop_children(record['unit'])
-                        self.failure(path, d, f'runner exited {result.returncode} without a complete result')
-            self.telemetry(path, record)
+                process = subprocess.Popen(launch, stdout=output, stderr=subprocess.STDOUT, close_fds=True)
+                phase, phase_start = 'preparing', started
+                while process.poll() is None:
+                    now = time.monotonic()
+                    state = self.status(path.name)
+                    if state != phase:
+                        phase, phase_start = state, now
+                    phase_limit = self.cfg['validation_timeout'] if phase == 'validating' else self.cfg['preparation_timeout']
+                    if now - started > self.cfg['run_timeout'] or now - phase_start > phase_limit:
+                        process.kill()
+                        process.wait()
+                        raise RuntimeError('execution deadline exceeded')
+                    time.sleep(1)
+                if process.returncode or not (path / 'out/remote-manifest.json').exists():
+                    raise RuntimeError(f'runner exited {process.returncode} without a complete result')
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            failure_reason = str(exc)
         finally:
-            self.cleanup(record)
+            try:
+                self.telemetry(path, record)
+            except (OSError, subprocess.SubprocessError):
+                failure_reason = failure_reason or 'worker telemetry unavailable'
+            self.cleanup(record, release=failure_reason is not None)
             slot_file.close()
+            # No sandbox writer may remain when evidence is redacted/published.
+            if read(path / 'cleanup.json', {}).get('state') == 'quarantined':
+                self.failure(path, d, 'sandbox cleanup failed; evidence withheld on worker', unsafe=True)
+                return
+            if failure_reason:
+                self.failure(path, d, failure_reason)
             self.package(path, d)
 
     def sanitize(self, path):
@@ -361,12 +395,14 @@ class Worker:
             self.failure(path, d, 'runner did not emit manifest')
             return
         self.sanitize(path)
+        manifest = read(out / 'remote-manifest.json')
         evidence = out / 'evidence'
         evidence.mkdir(exist_ok=True)
-        for name in ('worker-telemetry.json', 'cleanup.json', 'ownership.json'):
+        for name in ('worker-telemetry.json', 'cleanup.json', 'ownership.json', 'sandbox.json'):
             if (path / name).exists():
                 shutil.copyfile(path / name, evidence / ('0-' + name))
-        manifest['staging_isolation_supported'] = d.get('staging_isolation_supported', False)
+        manifest['execution_isolation'] = 'sandbox'
+        manifest['sandbox'] = read(path / 'sandbox.json', {})
         manifest['cleanup'] = read(path / 'cleanup.json', {'state': 'unknown'})
         manifest['slot_id'] = read(path / 'ownership.json', {}).get('slot_id')
         manifest['files'] = {}
@@ -406,15 +442,16 @@ class Worker:
                 time.sleep(1)
 
     def telemetry(self, path, record):
-        result = command(['systemctl', 'show', record['unit'], '--property=MemoryPeak',
+        metric_unit = 'zora-qa-sandbox-' + path.name + '.slice'
+        result = command(['systemctl', 'show', metric_unit, '--property=MemoryPeak',
                           '--property=CPUUsageNSec', '--property=MemoryCurrent', '--property=ControlGroup'])
         group = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line).get('ControlGroup', '')
         events = {}
-        if group == '/system.slice/' + record['unit']:
+        if group.startswith('/') and '..' not in Path(group).parts and group.endswith('/' + metric_unit):
             for name in ('memory.events', 'memory.peak', 'cpu.stat'):
                 file = Path('/sys/fs/cgroup') / group.lstrip('/') / name
                 if file.exists(): events[name] = file.read_text()
-        journal = command(['journalctl', '-u', record['unit'], '_COMM=systemd', '--no-pager', '-n', '30', '-o', 'json'])
+        journal = command(['journalctl', '-u', metric_unit, '-u', 'zora-qa-sandbox-' + path.name + '.service', '_COMM=systemd', '--no-pager', '-n', '30', '-o', 'json'])
         system_events = []
         for line in journal.stdout.splitlines():
             try:
@@ -449,19 +486,11 @@ class Worker:
                 if remaining <= 0: raise TimeoutError('cleanup deadline exceeded')
                 return subprocess.run(args, text=True, capture_output=True, timeout=min(60, remaining), **kwargs)
             self.stop_children(record['unit'])
-            cluster = 'zora-qa-' + hashlib.sha256(path.name.encode()).hexdigest()[:24]
-            result = cleanup_command(['kind', 'delete', 'cluster', '--name', cluster])
+            result = cleanup_command(['bash', str(path / 'in/qa-sandbox.sh'), 'down', str(path)],
+                                     env=os.environ | record['env'])
             if result.returncode:
-                raise RuntimeError('Kind cleanup failed: ' + result.stderr)
-            result = cleanup_command(['docker', 'ps', '-aq', '--filter', 'label=io.x-k8s.kind.cluster=' + cluster])
-            if result.returncode or result.stdout.strip():
-                raise RuntimeError('cluster containers still exist or Docker unavailable')
-            helper = path / 'in/qa-network.sh'
-            if record['env']['QA_NET_ISOLATION'] == 'netns':
-                result = cleanup_command(['bash', str(helper), 'down'], env=os.environ | record['env'])
-                if result.returncode:
-                    raise RuntimeError('network cleanup failed: ' + result.stderr)
-            for name in ('work', 'scratch', 'staging'):
+                raise RuntimeError('sandbox cleanup failed; inspect private sandbox logs')
+            for name in ('work', 'scratch', 'staging', 'sandbox'):
                 target = path / name
                 if target.exists():
                     if target.is_symlink():
@@ -477,21 +506,24 @@ class Worker:
             atomic(path / 'cleanup.json', record)
             print('quarantined: ' + str(exc), flush=True)
 
-    def failure(self, path, d, reason):
+    def failure(self, path, d, reason, unsafe=False):
         # Preserve existing runner evidence; otherwise create a checkable infrastructure result.
-        out = path / 'out'
+        # If writers may survive, publish only a fresh supervisor-created failure.
+        # Never read, sanitize, or archive the runner's live output directory.
+        out = path / ('safe-out-' + str(time.time_ns()) if unsafe else 'out')
         out.mkdir(exist_ok=True)
-        try:
-            self.sanitize(path)
-        except RuntimeError as exc:
-            reason = str(exc)
+        if not unsafe:
+            try:
+                self.sanitize(path)
+            except RuntimeError as exc:
+                reason = str(exc)
         if not out.is_symlink():
             evidence = out / 'evidence'
             evidence.mkdir(exist_ok=True)
             atomic(evidence / '0-worker-failure.json', {'reason': reason, 'at': time.time()})
             manifest = {k: d[k] for k in ('job_id', 'attempt_id', 'worker_id', 'environment_id',
                                          'commit', 'base', 'charter_sha256', 'bundle_sha256')}
-            manifest.update(protocol_version=4, runner_version=4, staging_isolation_supported=d.get('staging_isolation_supported', False),
+            manifest.update(protocol_version=5, runner_version=5, execution_isolation='sandbox',
                             environment={'ready': False, 'reason': reason}, codex={'ran': (out / 'codex-events.jsonl').exists(), 'exit_code': None}, files={})
             for file in out.rglob('*'):
                 if file.is_file() and not file.is_symlink() and file.name != 'remote-manifest.json':
@@ -506,7 +538,7 @@ class Worker:
         owner = read(path / 'ownership.json', {})
         reservation = read(self.slots / (str(owner.get('slot_id')) + '.json'), {})
         still_reserved = reservation.get('attempt_id') == path.name
-        self.set_status(path, 'packaging' if still_reserved else 'failed', reason)
+        self.set_status(path, 'packaging' if still_reserved and not unsafe else 'failed', reason)
 
     def reap(self, release=None):
         # Lock order: never wait for a slot while holding admission. Try slot then admission
@@ -522,10 +554,15 @@ class Worker:
                 expired = record.get('expires_at', float('inf')) <= time.time()
                 if record['state'] == 'retained' and not expired and release != path.name:
                     continue
-                if self.status(path.name) not in TERMINAL:
+                interrupted = self.status(path.name) not in TERMINAL
+                if interrupted:
                     self.telemetry(path, record)
-                    self.failure(path, self.dispatch(path), 'worker unit stopped before completion; see worker telemetry for OOM or termination evidence')
-                self.cleanup(record, release=expired or release == path.name)
+                self.cleanup(record, release=expired or release == path.name or interrupted)
+                if read(path / 'cleanup.json', {}).get('state') == 'quarantined':
+                    self.failure(path, self.dispatch(path), 'sandbox cleanup failed; evidence withheld on worker', unsafe=True)
+                    continue
+                if interrupted:
+                    self.failure(path, self.dispatch(path), 'worker unit stopped before completion; see worker telemetry')
                 self.package(path, self.dispatch(path))
         for path in self.jobs.iterdir():
             if not path.is_dir() or not (path / 'worker-state.json').exists():
@@ -541,9 +578,12 @@ class Worker:
             return self.status(attempt)
         with lock(self.guard):
             self.set_status(path, 'cancelling')
-        command(['systemctl', 'stop', unit_name(attempt)])
-        self.failure(path, d, 'cancelled by dispatcher')
+        result = command(['systemctl', 'stop', unit_name(attempt)])
+        if result.returncode or active(unit_name(attempt)):
+            raise RuntimeError('supervisor stop not confirmed; cancellation remains pending')
         self.reap()
+        unsafe = read(path / 'cleanup.json', {}).get('state') == 'quarantined'
+        self.failure(path, d, 'cancelled by dispatcher', unsafe=unsafe)
         self.set_status(path, 'cancelled')
         return 'cancelled'
 
