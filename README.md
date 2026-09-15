@@ -3,11 +3,37 @@
 A personal plan → implement → validate agent harness for the `zora-pantheon`
 monorepo.
 
-![The ten steps of the zora-harness cycle: task and acceptance criteria, clean-branch check, plan (zora-planner on Fable), lead and user approval, implement (zora-implementer on Opus, test-first), lead reruns the gates and rebases, validate (zora-validator on Fable with fresh context — tests, then local APIs and database, then browser), lead judges the evidence, gates and open a PR, stop at green CI without merging. FAIL loops back to implement, at most two rounds; INCOMPLETE returns to validation. Below, the local user scope: zora-harness/ is symlinked by install.sh into ~/.claude/agents and skills, which Claude Code loads against the zora-pantheon main checkout served by Tilt, the service APIs, MongoDB and the web-app.](docs/zora-harness.png)
+![Parallel feature development in Zora Harness: features A, B and C each have an independent worktree, plan, implementation, gates and run state. Their pushed commits enter a shared QA queue. Two reusable isolated QA slots on the current VPS run Codex with private Docker, Kind and unchanged Tilt. Startup is serialized; ready environments validate concurrently. Each feature receives its own evidence, verdict and PR. The two-slot limit applies to QA, not development.](docs/zora-harness.png)
 
-The diagram shows the original single-checkout, local-validator flow. Work now happens in
-a per-feature lane worktree, and validation in the [two-slot remote QA
-flow](skills/zora-cycle/qa/README.md).
+## Parallel development and QA
+
+**Multiple features can be developed at the same time. The current VPS can run two
+QA attempts concurrently; that limit does not cap the number of development lanes.**
+
+1. **Develop features in independent lanes.** Each feature has its own worktree,
+   plan, implementation, gates, run folder and history. Work in one lane can continue
+   while another feature is developing, waiting for QA or being validated.
+2. **Submit each feature's exact commit.** After its gates pass, push the commit and
+   send its QA charter to the selected VPS. Attempts from all lanes enter a shared
+   queue. A slot is assigned to an attempt, not permanently to a feature.
+3. **Run up to two QA attempts on this VPS.** Each slot owns a checkout, temporary
+   files, HOME, processes, network, Docker daemon/storage, Kind cluster and database.
+   Existing Pantheon Tilt commands run unchanged. QA startup is serialized; ready
+   environments run Codex validation concurrently. Other attempts remain queued.
+4. **Keep results separate and release capacity.** Evidence and verdicts are bound
+   to the originating feature's exact commit and attempt. The supervisor verifies
+   cleanup before reusing a slot for the next queued attempt.
+5. **Review and deliver each feature independently.** The lead checks its evidence,
+   commit identity and checksums. PASS proceeds to that feature's PR and CI; FAIL
+   returns to a fix in that lane; INCOMPLETE repairs QA and retries the same commit.
+   The harness stops at green CI and does not automatically merge.
+
+The two slots are shared across features, not a fixed pair of feature environments.
+Additional workers can be selected explicitly; automatic worker balancing is not
+implemented. See the [remote QA guide](skills/zora-cycle/qa/README.md).
+
+**All harness isolation is implemented here and on the VPS. No Pantheon code or
+regular developer Tilt configuration changes are required.**
 
 The real files live here, outside the repo. `install.sh` symlinks them into
 `~/.claude/`, which Claude Code reads from **any** working directory — so the
@@ -63,7 +89,7 @@ Codex (`gpt-6-astra`) runs the validation ladder; the lead checks the downloaded
 verdict and evidence with `verdict-check.sh --remote` before making the final call.
 
 The replacement worker uses **protocol 5 with mandatory per-attempt sandboxes**.
-Two slots remain the initial capacity target:
+Two slots are deployed on the current VPS:
 
 - Each attempt owns a checkout, Kind cluster and database, private process/network
   namespaces, `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, HOME and tool state.
@@ -82,12 +108,15 @@ no serial compatibility fallback or staging-support marker. The existing local
 validator fallback remains part of the lane workflow when remote QA is unavailable.
 
 Explicit worker inventory supports additional VPSs; automatic balancing is not
-implemented. The earlier two-slot six-service proof used the superseded shared-Docker
-and Pantheon staging approach. Protocol-5 runtime isolation and supervisor integration now pass, and two sandbox
-slots are installed. Scoped isolation now passes for two distinguishable original commits using the
-six-service profile: A was removed while B's API, web and Kubernetes remained healthy;
-a third job admitted only after slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown. Supplemental A browser monitoring had two transient failures (49/51 healthy),
-then recovered; capacity beyond this profile and a second VPS remain unverified.
+implemented. Two original commits ran concurrently with the selected six-service
+profile. Removing one environment left the other healthy, and a queued third attempt
+started only after a slot was released. The second run passed all five QA rungs,
+local evidence verification and clean teardown.
+
+The first run's supplemental browser checks recorded two transient failures
+(49/51 healthy), then recovered. Cold startup took approximately 25–37 minutes.
+Other service combinations and a second physical VPS still need validation; the
+[plan](docs/plans/parallel-features.md) records the evidence and remaining checks.
 
 See the [QA setup and operator guide](skills/zora-cycle/qa/README.md),
 [detailed flow](docs/HOW-IT-WORKS.md#qa-on-an-isolated-vm), and
