@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# qa-job.sh — runs ON THE QA VM, one job at a time. run-codex-qa uploads a fresh copy with
+# qa-job.sh — runs ON THE QA VM, inside a managed slot or legacy exclusive mode.
+# run-codex-qa uploads a fresh copy with
 # every job, so the VM always runs the harness version that dispatched it.
 #
 #   qa-job.sh --job <id> --dir <job-dir> --repo <url> --base <sha> --commit <sha>
@@ -18,6 +19,7 @@
 #   cache/zora-pantheon.git  bare mirror, refreshed every job
 set -uo pipefail
 RUNNER_VERSION=3
+[ "${QA_MANAGED:-0}" = 1 ] && RUNNER_VERSION=4
 
 JOB="" DIR="" REPO="" BASE="" COMMIT="" PROFILE="" SERVICES=""
 while [ $# -gt 0 ]; do
@@ -40,13 +42,20 @@ IN="$DIR/in"; OUT="$DIR/out"; EVID="$OUT/evidence"; WORK="$DIR/work"; SCRATCH="$
 QA_HOME="$(cd "$DIR/../.." && pwd)"
 mkdir -p "$EVID" "$SCRATCH"
 
-if [ -f "$QA_HOME/vm.env" ]; then set -a; . "$QA_HOME/vm.env"; set +a; fi
+if [ "${QA_MANAGED:-0}" != 1 ] && [ -f "$QA_HOME/vm.env" ]; then set -a; . "$QA_HOME/vm.env"; set +a; fi
 CODEX_BIN="${CODEX_BIN:-codex}"
 QA_MODEL="${QA_MODEL:-gpt-6-astra}"
 QA_EFFORT="${QA_EFFORT:-high}"
 QA_CLUSTER_DRIVER="${QA_CLUSTER_DRIVER:-k3d}"
+if [ "${QA_MANAGED:-0}" = 1 ]; then
+  QA_CLUSTER_DRIVER=kind
+  export ZORA_TILT_STAGING_ROOT="${QA_STAGING_ROOT:?managed QA requires QA_STAGING_ROOT}"
+fi
 # Unique names prevent cleanup from touching the user's existing cluster.
 QA_CLUSTER="zora-qa-${JOB,,}"
+if [ "${QA_MANAGED:-0}" = 1 ]; then
+  QA_CLUSTER="zora-qa-$(printf %s "$JOB" | sha256sum | cut -c1-24)"
+fi
 QA_CLUSTER="${QA_CLUSTER:0:35}"; QA_CLUSTER="${QA_CLUSTER%-}"  # k3d rejects names over 35 characters
 K3D_CLUSTER="$QA_CLUSTER"
 QA_CONTEXT="$QA_CLUSTER_DRIVER-$QA_CLUSTER"
@@ -106,6 +115,7 @@ CLUSTERS
 }
 
 prepare_exclusive_environment() {
+  if [ "${QA_MANAGED:-0}" != 1 ]; then
   local unit
   for unit in $QA_STOP_SERVICES; do
     if systemctl is-active --quiet "$unit"; then
@@ -113,6 +123,7 @@ prepare_exclusive_environment() {
     fi
   done
   stop_existing_clusters || { env_fail "could not stop existing Kubernetes clusters"; return 1; }
+  fi
   # Refuse a stale server instead of accepting its HTTP response as job evidence.
   python3 - "$TILT_PORT" <<'PORTS'
 import socket, sys
@@ -132,15 +143,28 @@ create_cluster() {
   case "$QA_CLUSTER_DRIVER" in
     kind)
       python3 - "$WORK" "$DIR/kind.json" <<'KIND'
-import json, sys
+import json, os, sys
 work, target = sys.argv[1:]
 json.dump({'kind':'Cluster', 'apiVersion':'kind.x-k8s.io/v1alpha4',
+    **({'networking': {'apiServerAddress': os.environ['QA_HOST_IP']}} if os.environ.get('QA_MANAGED') == '1' and os.environ.get('QA_NET_ISOLATION') == 'netns' else {}),
     'nodes':[{'role':'control-plane', 'extraMounts':[{
         'hostPath':work+'/tilt/data', 'containerPath':'/mnt/mac'+work+'/tilt/data'}]}]}, open(target,'w'))
 KIND
       CLUSTER_STARTED=true
-      kind create cluster --name "$QA_CLUSTER" --image "$QA_NODE_IMAGE" \
-        --config "$DIR/kind.json" --kubeconfig "$KUBECONFIG" --wait 180s
+      local host_net=()
+      if [ "${QA_MANAGED:-0}" = 1 ] && [ "${QA_NET_ISOLATION:-}" = netns ]; then
+        # Kind allocates its API port with a local bind before invoking host Docker.
+        host_net=(nsenter --net=/proc/1/ns/net)
+      fi
+      "${host_net[@]}" kind create cluster --name "$QA_CLUSTER" --image "$QA_NODE_IMAGE" \
+        --config "$DIR/kind.json" --kubeconfig "$KUBECONFIG" --wait 180s || return 1
+      if [ "${QA_MANAGED:-0}" = 1 ]; then
+        if [ -n "${QA_CLUSTER_MEMORY_MAX_MB:-}" ]; then
+          docker update --memory "${QA_CLUSTER_MEMORY_MAX_MB}m" --memory-swap "${QA_CLUSTER_MEMORY_MAX_MB}m" \
+            "$QA_CLUSTER-control-plane" || return 1
+        fi
+        kubectl --kubeconfig "$KUBECONFIG" --request-timeout=30s get --raw=/readyz || return 1
+      fi
       ;;
     k3d)
       if ! k3d registry list "$K3D_REGISTRY" >/dev/null 2>&1; then
@@ -157,8 +181,38 @@ KIND
   esac
 }
 
+install_command_wrappers() {
+  # Pin shell-outs to this job even when Tilt injects a frozen kubeconfig.
+  mkdir -p "$DIR/bin"
+  printf '#!/bin/bash\nexec /bin/bash "$@"\n' > "$DIR/bin/sh"
+  local kubectl_bin; kubectl_bin="$(command -v kubectl)"
+  printf '#!/bin/bash\nexport KUBECONFIG=%q\nexec %q "$@"\n' "$KUBECONFIG" "$kubectl_bin" > "$DIR/bin/kubectl"
+  local helm_bin tilt_bin tilt_state="$SCRATCH/tilt-state"
+  helm_bin="$(command -v helm)" || return 1
+  tilt_bin="$(command -v tilt)" || return 1
+  printf '#!/bin/bash\nexport KUBECONFIG=%q\nexec %q "$@"\n' "$KUBECONFIG" "$helm_bin" > "$DIR/bin/helm"
+  mkdir -p "$tilt_state"/{legacy,runtime,config,cache,data,state}
+  chmod 700 "$tilt_state" "$tilt_state/runtime"
+  {
+    printf '#!/bin/bash\n'
+    printf 'export TILT_DEV_DIR=%q\n' "$tilt_state/legacy"
+    printf 'export XDG_RUNTIME_DIR=%q\n' "$tilt_state/runtime"
+    printf 'export XDG_CONFIG_HOME=%q\n' "$tilt_state/config"
+    printf 'export XDG_CACHE_HOME=%q\n' "$tilt_state/cache"
+    printf 'export XDG_DATA_HOME=%q\n' "$tilt_state/data"
+    printf 'export XDG_STATE_HOME=%q\n' "$tilt_state/state"
+    printf 'exec %q "$@"\n' "$tilt_bin"
+  } > "$DIR/bin/tilt"
+  # Prefer a host shell: it can read scripts from QA_SCRATCH.
+  if ! command -v mongosh >/dev/null; then
+    printf '#!/bin/bash\nexec kubectl --context %q exec -i deploy/mongo -- mongosh "$@"\n' "$QA_CONTEXT" > "$DIR/bin/mongosh"
+  fi
+  chmod 700 "$DIR/bin/"*
+  export PATH="$DIR/bin:$PATH"
+}
+
 start_tilt() {
-  ( cd "$WORK" && exec setsid "${TILT_ENV[@]}" tilt up -f tilt/Tiltfile \
+  ( exec 8>&- 9>&-; cd "$WORK" && exec setsid "${TILT_ENV[@]}" tilt up -f tilt/Tiltfile \
       --context "$QA_CONTEXT" --host 127.0.0.1 --port "$TILT_PORT" --stream "${TILT_ARGS[@]}" ) \
       > "$EVID/0-tilt.log" 2>&1 < /dev/null &
   echo $! > "$DIR/tilt.pid"
@@ -193,6 +247,15 @@ prepare() {
     || { env_fail "base $BASE is not an ancestor of $COMMIT"; return 1; }
   [ -z "$(git -C "$WORK" status --porcelain)" ] \
     || { env_fail "the fresh checkout is not clean"; return 1; }
+
+  if [ "${QA_MANAGED:-0}" = 1 ]; then
+    if [ "${QA_NET_ISOLATION:-}" = netns ]; then
+    grep -q ZORA_TILT_STAGING_ROOT "$WORK/tilt/Tiltfile" || {
+      env_fail "commit lacks opt-in ZORA_TILT_STAGING_ROOT support; cannot run parallel QA"; return 1;
+    }
+    fi
+    mkdir -p "$ZORA_TILT_STAGING_ROOT" || return 1
+  fi
 
   # Sandbox-only runtime files. Each must be gitignored, so they can never replace source.
   if [ -d "$QA_HOME/secrets" ]; then
@@ -229,17 +292,7 @@ prepare() {
     || { env_fail "could not reserve QA ports (evidence/0-runner.log)"; return 1; }
   create_cluster >> "$EVID/0-cluster.log" 2>&1 \
     || { env_fail "fresh cluster creation failed (evidence/0-cluster.log)"; return 1; }
-  # Linux compatibility without the VPS wrapper that forces the usual kubeconfig.
-  mkdir -p "$DIR/bin"
-  printf '#!/bin/bash\nexec /bin/bash "$@"\n' > "$DIR/bin/sh"
-  local kubectl_bin; kubectl_bin="$(command -v kubectl)"
-  printf '#!/bin/bash\nexport KUBECONFIG=%q\nexec %q "$@"\n' "$KUBECONFIG" "$kubectl_bin" > "$DIR/bin/kubectl"
-  # Prefer a host shell: it can read scripts from QA_SCRATCH.
-  if ! command -v mongosh >/dev/null; then
-    printf '#!/bin/bash\nexec kubectl --context %q exec -i deploy/mongo -- mongosh "$@"\n' "$QA_CONTEXT" > "$DIR/bin/mongosh"
-  fi
-  chmod 700 "$DIR/bin/"*
-  export PATH="$DIR/bin:$PATH"
+  install_command_wrappers || { env_fail "could not install isolated CLI wrappers"; return 1; }
   start_tilt
   python3 - "$TILT_READY_TIMEOUT" "$EVID/0-tilt-resources.json" >> "$EVID/0-runner.log" 2>&1 <<'PY' \
     || { env_fail "Tilt resources did not become ready (evidence/0-tilt-resources.json, evidence/0-tilt.log)"; return 1; }
@@ -282,7 +335,7 @@ sys.exit(1)
 PY
 
   # The web-app is not part of Tilt; start its dev server for the browser rung.
-  ( cd "$WORK/apps/web-app" && exec setsid env HN_ENV=local API_URL="$API_URL" \
+  ( exec 8>&- 9>&-; cd "$WORK/apps/web-app" && exec setsid env HN_ENV=local API_URL="$API_URL" \
       pnpm exec react-router dev --host 127.0.0.1 --port 5173 --strictPort ) \
       > "$EVID/0-web-app.log" 2>&1 < /dev/null &
   echo $! > "$DIR/webapp.pid"
@@ -378,6 +431,10 @@ finalize() {
     git -C "$WORK" status --porcelain --untracked-files=no > "$DIR/tracked-after.txt" 2>/dev/null
     git -C "$WORK" status --porcelain > "$EVID/0-checkout-after.txt" 2>/dev/null
   fi
+  if $CLUSTER_STARTED; then
+    kubectl --request-timeout=15s get pods -A -o json > "$EVID/0-pods-final.json" 2>/dev/null || true
+    kubectl --request-timeout=15s get nodes -o json > "$EVID/0-nodes-final.json" 2>/dev/null || true
+  fi
   if $LOCKED; then  # never tear down an environment another job owns
     stop_group "$DIR/webapp.pid"
     if $TILT_STARTED; then
@@ -404,7 +461,7 @@ finalize() {
   M_ENV_REASON="$ENV_REASON" M_WEB_APP_READY="$WEB_APP_READY" M_SEEDED="$SEEDED" \
   M_CLUSTER="$QA_CONTEXT" M_CODEX_RAN="$CODEX_RAN" M_CODEX_EXIT="$CODEX_EXIT" \
   M_CODEX_VERSION="$CODEX_VERSION" M_MODEL="$QA_MODEL" M_EFFORT="$QA_EFFORT" \
-  python3 - "$OUT" "$DIR/tracked-after.txt" <<'PY'
+  python3 - "$OUT" "$DIR/tracked-after.txt" "$IN/dispatch.json" <<'PY'
 import datetime, hashlib, json, os, re, socket, sys
 out, tracked_path = sys.argv[1], sys.argv[2]
 e = os.environ
@@ -457,11 +514,25 @@ manifest = {
     },
     "files": files,
 }
+if e.get("QA_MANAGED") == "1":
+    dispatch = json.load(open(sys.argv[3]))
+    for key in ("protocol_version", "job_id", "attempt_id", "worker_id", "environment_id", "charter_sha256", "bundle_sha256"):
+        manifest[key] = dispatch[key]
+    manifest["slot_id"] = e["QA_SLOT_ID"]
+    manifest["services"] = e.get("M_SERVICES", "").split()
+    manifest["staging_isolation_supported"] = dispatch.get("staging_isolation_supported", False)
+    manifest["environment"].update(slot_id=e["QA_SLOT_ID"], isolation=e["QA_NET_ISOLATION"],
+        staging_root=e["ZORA_TILT_STAGING_ROOT"], retained=e.get("QA_KEEP_CLUSTER") == "1",
+        health_evidence="evidence/0-nodes-final.json", images_evidence="evidence/0-pods-final.json")
 json.dump(manifest, open(os.path.join(out, "remote-manifest.json"), "w"), indent=2)
 PY
   tar -czf "$DIR/result.tar.gz" -C "$OUT" .
   if $LOCKED; then remove_checkout; fi
-  if $ENV_READY && $CODEX_RAN; then set_status done; else set_status failed; fi
+  if [ "${QA_MANAGED:-0}" = 1 ]; then
+    if $ENV_READY && $CODEX_RAN; then printf 'done\n' > "$DIR/runner-status"
+    else printf 'failed\n' > "$DIR/runner-status"; fi
+    if [ "${QA_KEEP_CLUSTER:-0}" = 1 ]; then touch "$DIR/retain"; fi
+  elif $ENV_READY && $CODEX_RAN; then set_status done; else set_status failed; fi
 }
 
 # The checkout is ~3 GB and carries copies of the runtime .env files, while the evidence
@@ -469,6 +540,7 @@ PY
 remove_checkout() {
   if [ "${QA_KEEP_WORK:-0}" = 1 ] || [ "${QA_KEEP_CLUSTER:-0}" = 1 ]; then return; fi
   rm -rf -- "$WORK" "$SCRATCH"
+  if [ "${QA_MANAGED:-0}" = 1 ]; then rm -rf -- "$ZORA_TILT_STAGING_ROOT"; fi
 }
 
 # Under the lock, before building: keep the newest QA_KEEP_JOBS job folders (their
@@ -487,12 +559,49 @@ prune_old_jobs() {
   docker builder prune -f --filter until=168h >> "$EVID/0-runner.log" 2>&1 || true
 }
 
-exec 9> "$QA_HOME/.qa.lock"
-if flock -n 9; then LOCKED=true
-else ENV_REASON="another QA job holds the VM; rerun when it finishes"; fi
+# Managed jobs execute every local process in their own network namespace.
+# The supervisor owns slot locks and crash recovery; legacy jobs keep their single lock.
+if [ "${QA_MANAGED:-0}" = 1 ]; then
+  case "${QA_NET_ISOLATION:-}" in
+    netns) ;;
+    none) [ "${QA_SLOTS:-}" = 1 ] || { echo "isolation=none requires exactly one slot" >&2; exit 2; } ;;
+    *) echo "unsupported managed isolation" >&2; exit 2 ;;
+  esac
+fi
+if [ "${QA_MANAGED:-0}" = 1 ] && [ "${QA_NET_ISOLATION:-}" = netns ] && [ "${QA_INSIDE_NETNS:-0}" != 1 ]; then
+  network="$IN/qa-network.sh"
+  bash "$network" up || exit 1
+  trap '[ "${QA_KEEP_CLUSTER:-0}" = 1 ] || bash "$network" down' EXIT
+  ip netns exec "$QA_NS" env QA_INSIDE_NETNS=1 bash "$IN/qa-job.sh" \
+    --job "$JOB" --dir "$DIR" --repo "$REPO" --base "$BASE" --commit "$COMMIT" \
+    --profile "$PROFILE" --services "$SERVICES" &
+  child=$!
+  trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; exit 143' TERM INT
+  wait "$child"
+  exit $?
+fi
+if [ "${QA_MANAGED:-0}" = 1 ]; then
+  LOCKED=true
+else
+  exec 9> "$QA_HOME/.qa.lock"
+  if flock -n 9; then LOCKED=true
+  else ENV_REASON="another QA job holds the VM; rerun when it finishes"; fi
+fi
 trap finalize EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 set_status preparing
-if $LOCKED; then prune_old_jobs; fi
-if $LOCKED && prepare; then run_codex; fi
+if $LOCKED && [ "${QA_MANAGED:-0}" != 1 ]; then prune_old_jobs; fi
+if $LOCKED; then
+  exec 8> "$QA_HOME/.qa-build.lock"
+  if flock -w "${QA_BUILD_WAIT_SECONDS:-7200}" 8; then
+    if prepare; then
+      flock -u 8; exec 8>&-
+      run_codex
+    else
+      flock -u 8; exec 8>&-
+    fi
+  else
+    env_fail "timed out waiting for bootstrap capacity"
+  fi
+fi

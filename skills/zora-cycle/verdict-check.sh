@@ -3,8 +3,9 @@
 #
 #   verdict-check.sh <run-dir> [repo-dir] [--remote]      (repo-dir defaults to the current directory)
 #
-# <run-dir> holds verdict.json. For a remote QA job it is the job folder
-# ($RUN/qa/<job-id>), which also holds remote-manifest.json and dispatch.json.
+# <run-dir> holds verdict.json. For a remote QA job it is the attempt folder
+# ($RUN/qa/<job-id>/attempts/<attempt-id>), which also holds remote-manifest.json
+# and dispatch.json.
 #
 # Always checks that the verdict holds for the working tree in front of it:
 #   - the verdict is for the current HEAD, and nothing uncommitted has changed since
@@ -44,7 +45,7 @@ fi
 if [ -n "$(git -C "$repo_dir" status --porcelain)" ]; then dirty=1; else dirty=0; fi
 
 python3 - "$run_dir" "$head_sha" "$dirty" "$remote" <<'PY'
-import hashlib, json, os, sys
+import hashlib, json, os, re, sys
 
 run_dir, head = sys.argv[1], sys.argv[2]
 dirty, want_remote = sys.argv[3] == "1", sys.argv[4] == "1"
@@ -87,6 +88,48 @@ def environment_problems():
 
 def remote_problems():
     probs = []
+    version = m.get("runner_version")
+    protocol = m.get("protocol_version")
+    modern = protocol == 4 or version == 4 or (d or {}).get("protocol_version") == 4
+    if modern:
+        if protocol != 4 or version != 4 or (d or {}).get("protocol_version") != 4:
+            probs.append("QA protocol version mismatch; v4 cannot fall back to legacy checks")
+        for key in ("job_id", "attempt_id", "worker_id", "environment_id", "charter_sha256",
+                    "bundle_sha256", "repo"):
+            if key not in m or key not in (d or {}) or m.get(key) != (d or {}).get(key):
+                probs.append(f"QA identity mismatch or missing field: {key}")
+        # Early v4 runners represented inactive selectors as null/empty string.
+        # Normalize only those documented empty forms; reject absent fields and bad types.
+        def selection(record):
+            if "profile" not in record or "services" not in record:
+                return None
+            profile, services = record["profile"], record["services"]
+            if profile == "":
+                profile = None
+            if services is None:
+                services = []
+            if ((profile is not None and (not isinstance(profile, str) or not re.fullmatch(r"[a-z0-9-]+", profile)))
+                    or not isinstance(services, list)
+                    or any(not isinstance(s, str) or not re.fullmatch(r"[a-z0-9-]+", s) for s in services)
+                    or bool(profile) == bool(services)):
+                return None
+            return profile, services
+        expected_selection, actual_selection = selection(d or {}), selection(m)
+        if expected_selection is None or actual_selection is None or expected_selection != actual_selection:
+            probs.append("QA identity mismatch or invalid profile/services selection")
+        expected_staging = (d or {}).get("staging_isolation_supported", False)
+        actual_staging = m.get("staging_isolation_supported", False)
+        if (not isinstance(expected_staging, bool) or not isinstance(actual_staging, bool)
+                or expected_staging != actual_staging):
+            probs.append("QA identity mismatch or invalid field: staging_isolation_supported")
+        for key in ("job_id", "attempt_id", "worker_id", "environment_id", "slot_id"):
+            if not isinstance(m.get(key), (str, int)) or str(m.get(key)) == "":
+                probs.append(f"QA identity missing: {key}")
+        for key in ("charter_sha256", "bundle_sha256"):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(m.get(key) or "")):
+                probs.append(f"QA identity invalid digest: {key}")
+    elif version not in (1, 2, 3) or protocol is not None:
+        probs.append("unsupported runner/protocol version; legacy manifests must explicitly use runner version 1, 2 or 3")
     mc = str(m.get("commit") or "")
     if mc != head:
         probs.append(f"the VM validated {mc[:12] or '(no commit)'}, but HEAD is {head[:12]}")
@@ -119,8 +162,13 @@ def integrity_problems():
         return ["the manifest lists no files, so the download cannot be verified"]
     probs = []
     for rel, digest in files.items():
+        if (not isinstance(rel, str) or os.path.isabs(rel)
+                or os.path.normpath(rel).startswith("../") or rel == ".."
+                or (rel not in ("verdict.json", "codex-events.jsonl") and not rel.startswith("evidence/"))):
+            probs.append(f"download integrity: unsafe manifest path {rel!r}")
+            continue
         p = os.path.join(run_dir, rel)
-        if not os.path.isfile(p):
+        if os.path.islink(p) or not os.path.isfile(p):
             probs.append(f"download integrity: {rel} is in the manifest but missing here")
             continue
         h = hashlib.sha256()
@@ -182,6 +230,11 @@ for n in (1, 2, 3, 4, 5):
     if not evidence:
         problems.append(f"{label}: ran but lists no evidence")
     for e in evidence:
+        if remote and (not isinstance(e, str) or os.path.isabs(e)
+                       or not os.path.normpath(e).startswith("evidence/")
+                       or e not in (m.get("files") or {})):
+            problems.append(f"{label}: remote evidence must be a checksummed evidence/ file: {e}")
+            continue
         p = e if os.path.isabs(e) else os.path.join(run_dir, e)
         if not os.path.isfile(p):
             problems.append(f"{label}: evidence file missing: {e}")

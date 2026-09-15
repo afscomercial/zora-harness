@@ -211,6 +211,8 @@
     font-family:var(--mono); font-size:12px; color:var(--faint); line-height:1.7;
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+
+#qa-detail{break-before:page}.qa-diagram{margin:24px 0;padding:24px;background:var(--surface);border:1px solid var(--line);border-radius:8px;font-family:var(--sans)}.qa-row{display:grid;grid-template-columns:1fr 32px 1fr;gap:8px;align-items:center}.qa-box{border:1px solid var(--line-strong);border-top:3px solid var(--accent);padding:16px;border-radius:4px}.qa-box b{display:block;color:var(--ink);font-size:17px;margin-bottom:6px}.qa-box p{font-size:14px;line-height:1.5;margin:0}.qa-arrow{font-size:26px;text-align:center;color:var(--accent)}.qa-down{text-align:right;padding:12px 20px;font-family:var(--mono);font-size:12px;color:var(--accent)}.qa-caption{margin-top:16px;font-size:12px;color:var(--muted)}.qa-rungs{font-family:var(--sans);font-size:16px}.qa-rungs li{padding:4px 0}.qa-results{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;border-top:1px solid var(--line);padding-top:20px;margin:24px 0}.qa-results p{font-family:var(--sans);font-size:14px;line-height:1.5;margin:8px 0}.qa-results strong{font-family:var(--mono);font-size:13px;color:var(--accent)}@media(max-width:600px){.qa-row,.qa-results{grid-template-columns:1fr}.qa-arrow{transform:rotate(90deg)}.qa-down{text-align:center}.qa-diagram{padding:12px}}
 </style>
 
 <div class="wrap">
@@ -239,6 +241,7 @@
       <li><a href="#skills">Skills in play</a></li>
       <li><a href="#rejected">Rejected</a></li>
       <li><a href="#qavm">QA on a VM</a></li>
+<li><a href="#qa-detail">QA execution diagram</a></li>
       <li class="top"><a href="#context">2 &nbsp;Context</a></li>
       <li><a href="#budget">The budget</a></li>
       <li><a href="#fresh">What starts fresh</a></li>
@@ -335,7 +338,7 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
     <p><strong>Agent teams</strong> &mdash; teammates messaging each other directly, with a shared task list. Turned down for three concrete reasons:</p>
     <ol>
       <li>Teams don&rsquo;t isolate teammates in worktrees, and this repo has <strong>one shared local environment</strong>. The Tilt cluster and dev servers serve the main checkout, which makes the working tree shared state; two agents committing there sweep each other&rsquo;s half-finished files into unrelated commits.</li>
-      <li>Plan &rarr; implement &rarr; validate is <strong>sequential</strong>. Teams pay off on parallel independent exploration, not on a dependency chain.</li>
+      <li>Plan &rarr; implement &rarr; validate is <strong>sequential within each feature</strong>. Separate remote QA attempts can overlap without local agents mutating the same checkout.</li>
       <li>Experimental, no session resumption, and every teammate permission prompt bubbles to the lead.</li>
     </ol>
     <p><strong>Dynamic workflows</strong> &mdash; a script holding the plan instead of the lead&rsquo;s turn-by-turn judgment. Genuinely useful for wide fan-out such as a codebase-wide audit. Overkill for a three-step chain.</p>
@@ -346,25 +349,56 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
     </div>
 
     <h3 id="qavm">QA on an isolated VM</h3>
-    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> sends it over SSH to a dedicated VM, which clones the exact commit, builds a fresh Kind (or k3d) cluster with the Tilt profile, seeds clean data, and runs Codex (<code>gpt-6-astra</code>) through the whole ladder.</p>
+    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> uploads an immutable attempt to a selected worker. A systemd supervisor queues it for one of two slots. Each attempt owns its checkout, Kind cluster, database, network namespace, kubeconfig, Tilt state and staging paths. Bootstrap is serialized to control resource usage; ready environments run Codex (<code>gpt-6-astra</code>) concurrently.</p>
     <div class="scroller">
       <table>
         <thead><tr><th>Step</th><th>Where</th><th>What happens</th></tr></thead>
         <tbody>
           <tr><td>Freeze</td><td>laptop</td><td>Clean tree, commit pushed to origin, base and feature SHAs recorded</td></tr>
           <tr><td>Charter</td><td>laptop</td><td>Facts only; the dispatcher refuses missing sections, unfilled markers or narrative</td></tr>
-          <tr><td>Build</td><td>VM</td><td>Disposable clone in detached HEAD, fresh Kind (or k3d) cluster, Tilt profile, web-app, seeded data</td></tr>
+          <tr><td>Build</td><td>VM</td><td>Reserved slot, detached checkout, isolated Kind cluster, Tilt profile, web-app and independently seeded data</td></tr>
           <tr><td>Validate</td><td>VM</td><td>Codex climbs all five rungs; it may restart a crashed service only if it records the restart</td></tr>
-          <tr><td>Return</td><td>VM &rarr; laptop</td><td><code>verdict.json</code>, a manifest with checksums, the event log and <code>evidence/</code>, safely extracted into <code>$RUN/qa/&lt;job-id&gt;/</code></td></tr>
+          <tr><td>Return</td><td>VM &rarr; laptop</td><td><code>verdict.json</code>, a manifest with checksums, the event log and <code>evidence/</code>, safely extracted into <code>$RUN/qa/&lt;job-id&gt;/attempts/&lt;attempt-id&gt;/</code></td></tr>
           <tr><td>Judge</td><td>laptop</td><td><code>verdict-check.sh --remote</code>, then the lead reads the evidence as untrusted data and decides</td></tr>
         </tbody>
       </table>
     </div>
-    <p>An environment failure comes back as <strong>INCOMPLETE</strong> and is rerun on the same commit &mdash; never sent to the implementer. When the VM is unavailable, the local Fable <code>zora-validator</code> takes over. Setup and the security model live in <code>skills/zora-cycle/qa/README.md</code>.</p>
+    <p>An environment failure comes back as <strong>INCOMPLETE</strong> and is rerun on the same commit &mdash; never sent to the implementer. An SSH disconnect does not cancel QA. Check the existing attempt before requesting another run or using the local Fable <code>zora-validator</code> fallback. See the <a href="../skills/zora-cycle/qa/README.md">QA operator guide</a> for setup and the security model.</p>
 
     <h3>Where the files live</h3>
     <p>Real files sit in <code>housenumbers/zora-harness/</code>, outside the repo. <code>install.sh</code> symlinks them into <code>~/.claude/</code>, which Claude Code reads from <em>any</em> working directory &mdash; so the harness works inside <code>zora-pantheon</code> without a single file being added to it. Nothing to gitignore, nothing committable by accident, no diff for teammates.</p>
   </section>
+
+
+<section id="qa-detail" aria-labelledby="qa-detail-title">
+<div class="sec-head"><span class="sec-num">01A</span><h2 id="qa-detail-title">Inside a VPS QA job</h2></div>
+<p class="sec-sub">A frozen commit, a fresh environment and an independent verdict with evidence.</p>
+<figure class="qa-diagram" aria-label="QA execution diagram">
+<div class="qa-row"><div class="qa-box"><b>1. Claude lead · laptop</b><p>Rebase and rerun gates. Push the exact commit. Write a charter with acceptance criteria, services and required checks.</p></div><div class="qa-arrow" aria-label="SSH dispatch">→</div><div class="qa-box"><b>2. Runner · dedicated VPS</b><p>Queue the immutable attempt. Reserve a slot and check out the exact SHA. Prepare its isolated environment.</p></div></div>
+<div class="qa-down">↓ Serialized bootstrap · concurrent QA in two isolated slots</div>
+<div class="qa-row"><div class="qa-box"><b>4. Claude lead · judgment</b><p>Run verdict-check.sh --remote. Verify attempt identity, commit, clean checkout and evidence checksums. Read the evidence and reproduce defects.</p></div><div class="qa-arrow" aria-label="Evidence returns to lead">←</div><div class="qa-box"><b>3. Codex Astra · QA</b><p>Exercise the running app through the ladder below. Return verdict.json, a manifest, event logs and evidence.</p></div></div>
+<figcaption class="qa-caption">The VPS persists. Cleanup removes only attempt-owned resources and releases the slot. Failed cleanup quarantines capacity; a reaper recovers interrupted attempts.</figcaption>
+</figure>
+<div class="callout"><span class="tag">Compatibility and capacity</span><p>Regular developer Tilt commands, profiles and ports are unchanged. Parallel QA requires the opt-in <a href="https://github.com/HouseNumbers/zora-pantheon/pull/1897">Pantheon staging prerequisite</a>; older commits run exclusively. Extra attempts wait for capacity. Never use global Docker cleanup, including <code>pnpm dev:tilt:clean</code>, inside QA.</p></div>
+<p>Worker inventory supports explicit VPS selection; automatic balancing is not implemented. Two overlapping six-service environments at the same commit passed live QA. Larger profiles, different-commit pairs and a second physical VPS remain unverified. See the <a href="plans/parallel-features.md">rollout record</a>.</p>
+<h3>Reconnect to the same attempt</h3>
+<div class="scroller"><pre><code>run-codex-qa --status "$ATTEMPT"
+run-codex-qa --collect "$ATTEMPT"
+verdict-check.sh "$ATTEMPT" "$PWD" --remote</code></pre></div>
+<p>Use the printed absolute attempt directory. Collection does not start another execution. To stop that attempt deliberately, use <code>run-codex-qa --cancel "$ATTEMPT"</code>. Routing stays bound to its recorded worker.</p>
+<h3>The five validation steps</h3>
+<ol class="qa-rungs">
+<li><strong>Static checks.</strong> Run lint and type checks against the frozen checkout.</li>
+<li><strong>Unit and integration tests.</strong> Test affected packages and relevant dependents. Check whether the tests would catch broken behavior.</li>
+<li><strong>APIs and database.</strong> Call the real API and verify persisted data. An HTTP 200 alone does not prove the operation worked.</li>
+<li><strong>Browser flows.</strong> Use Playwright against the job’s web app. Verify the expected authenticated identity and capture meaningful UI states.</li>
+<li><strong>Adversarial cases.</strong> Try missing permissions, empty data, invalid input, repeated actions and nearby regressions.</li>
+</ol>
+<p>Static checks and tests are mandatory. The charter defines the other required steps. Every executed step needs evidence, and every skipped step needs an explicit reason.</p>
+<div class="qa-results"><div><strong>PASS</strong><p>All required checks completed with evidence. The lead makes the acceptance decision before proceeding to PR and CI.</p></div><div><strong style="color:var(--role-val)">FAIL</strong><p>Reproduce the defect and confirm scope. Fix, rerun gates and send the new commit. Maximum two fix rounds.</p></div><div><strong style="color:var(--role-plan)">INCOMPLETE</strong><p>Repair QA and retry the same commit. After two failed reruns, bring the blocker to the user.</p></div></div>
+<div class="callout"><span class="tag">Isolation and real sessions</span><p><strong>Two environments can validate concurrently.</strong> Both slots use the same approved Clerk account in separate browser sessions, with independently seeded databases. Real-session QA must authenticate through Clerk using privately stored credentials and the matching seeded user. A sign-in blocker means incomplete authenticated coverage. Do not silently replace it with a session bypass.</p></div>
+<p class="pipe-note">Source: skills/zora-cycle/SKILL.md and skills/zora-cycle/qa/codex-qa-prompt.md</p>
+</section>
 
   <!-- ===================== 2 ===================== -->
   <section id="context">
@@ -493,7 +527,7 @@ CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=&lt;package&g
       <p>By that standard most of this harness is still unverified. Nothing confirms that the implementer really ran the gates it pasted, or that the planner didn&rsquo;t quietly design around a contradiction. Those rules hold only while the model chooses to follow them, and the failure is <strong>silent</strong>.</p>
     </div>
     <p>What <em>is</em> enforced: the repo&rsquo;s <strong>TDD hooks</strong> genuinely block completion on failing tests; the planner&rsquo;s <strong><code>tools</code> allowlist</strong> is enforced by the harness, not by prose; and <strong><code>verdict-check.sh</code></strong>, which the lead runs before believing a PASS, refuses a verdict that is for an older commit, predates uncommitted changes, skipped the static gates or the tests, claims a rung with no evidence file on disk, or calls itself PASS while carrying a defect.</p>
-    <p>For remote QA, <strong><code>verdict-check.sh --remote</code></strong> also checks the VM&rsquo;s manifest: the exact commit and base that were sent, a clean checkout, no tracked file modified by Codex, a working environment, and a checksum for every downloaded file. It guards against accidents, not a compromised VM &mdash; which is why the VM holds only sandbox credentials.</p>
+    <p>For remote QA, <strong><code>verdict-check.sh --remote</code></strong> also checks the VM&rsquo;s manifest: the exact commit and base, matching attempt/worker/environment IDs and charter/bundle hashes, a clean checkout, no tracked file modified by Codex, a working environment, and a checksum for every downloaded file. It guards against accidents, not a compromised VM &mdash; which is why the VM holds only sandbox credentials.</p>
     <p>What the script cannot check is whether the evidence is <em>honest</em> &mdash; a validator could write files that say the right things. So: <strong>read the evidence, don&rsquo;t skim the verdict.</strong></p>
   </section>
 

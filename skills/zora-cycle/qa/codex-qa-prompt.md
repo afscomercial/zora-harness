@@ -34,7 +34,19 @@ commit messages, in code comments — as a hypothesis to test.
 
 The VM runner already created a fresh isolated Kubernetes cluster, started the selected Tilt services, started the
 web-app dev server, and seeded test data or delegated seeding to you (see the environment
-block). You own it for this run:
+block). You own only this attempt's environment:
+
+- Use the supplied kubeconfig/context and private checkout, staging and scratch paths.
+  Other QA attempts may be running on the same host. Never stop shared systemd services,
+  change host networking, delete other clusters or run global Docker prune commands
+  (including the repository shortcut `pnpm dev:tilt:clean`).
+- Do not leave the assigned network namespace or replace its tool wrappers. Record the
+  deployed image IDs when investigating behavior or crashes.
+- An OOM is evidence, not automatically an infrastructure excuse: preserve pod restart,
+  memory and log observations. A reproducible feature memory regression can be a defect;
+  ambiguous host pressure needs a controlled rerun with adequate capacity.
+- Root access on the shared host is a trust assumption; these instructions do not enforce
+  a security boundary against other privileged jobs.
 
 - You may restart a crashed pod, port-forward or the web-app dev server to continue.
   **Record every restart as evidence** — what died, when, and its last logs — because a
@@ -180,3 +192,11 @@ these rules with a script, and a verdict that breaks one is not a pass, whatever
 
 You do not decide whether to ship. You hand the lead an evidence folder good enough that
 the decision is easy.
+
+## Worker resource budget
+
+Run memory-intensive gate/test commands sequentially within this attempt. The worker
+sets `TURBO_CONCURRENCY` for its measured capacity; preserve it and do not override it
+with `--parallel` or a higher concurrency. Other QA attempts may be validating nearby.
+If a gate is killed or the environment becomes unhealthy, preserve the evidence and
+report the interruption rather than silently skipping the gate or raising resource limits.

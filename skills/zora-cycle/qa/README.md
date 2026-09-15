@@ -14,13 +14,13 @@ laptop (Claude Code lead)                        QA VM (dedicated, disposable jo
 ─────────────────────────                        ──────────────────────────────────
 freeze + push commit
 write $RUN/qa-charter.md
-run-codex-qa ──── ssh: upload bundle ─────────▶  qa-job.sh
+run-codex-qa ──── ssh: upload bundle ─────────▶  qa-worker.py → qa-job.sh
                                                    clone at exact commit (detached)
-             ◀─── poll status ─────────────────    fresh Kind or k3d cluster + Tilt profile
+             ◀─── poll status ─────────────────    fresh Kind cluster + Tilt profile
                                                    web-app dev server, seed data
                                                    codex exec (Astra, full access)
              ◀─── result.tar.gz ───────────────    manifest + checksums, teardown
-safe extract → $RUN/qa/<job-id>/
+safe extract → $RUN/qa/<job-id>/attempts/<attempt-id>/
 verdict-check.sh --remote → lead judges
 ```
 
@@ -28,7 +28,9 @@ verdict-check.sh --remote → lead judges
 
 | File | Where it runs | Role |
 |---|---|---|
-| `run-codex-qa` | laptop | Preflight, upload, start, poll, download, safe extraction |
+| `run-codex-qa` / `qa-dispatch.py` | laptop | Preflight, durable routing, atomic upload, submit, status, collect, cancel |
+| `qa-worker.py` | VM | Versioned supervisor, durable queue, slot ownership and recovery |
+| `qa-network.sh` | VM | Attempt-owned Kind network namespace |
 | `qa-job.sh` | VM | Builds the environment, runs Codex, writes the manifest |
 | `codex-qa-prompt.md` | VM (sent each job) | Codex's standing instructions — the validator protocol for Linux/Kubernetes |
 | `charter.template.md` | laptop | What the lead fills in per run |
@@ -37,8 +39,8 @@ verdict-check.sh --remote → lead judges
 | `redact-evidence.py` | VM (sent each job) | Scrubs every known secret value (runner env, `secrets/`, the QA password) and token-shaped strings from the output before it is hashed; Tilt echoes build args and pod env values |
 
 `qa-job.sh`, the prompt, the schema and the browser helper are uploaded with every job, so the VM always
-runs the harness version that dispatched it. The VM needs tools and credentials, not
-harness files.
+runs the harness version that dispatched it. Install the matching protocol-v4
+`qa-worker.py` supervisor on each worker before dispatching v4 bundles.
 
 ## What the laptop refuses before anything is sent
 
@@ -70,7 +72,8 @@ VM also avoids arm64 image builds, which is where local MongoDB Enterprise image
 have been fragile on Apple Silicon.
 
 **The SSH user.** A dedicated user such as `zqa`, or `root` on a VPS used only for QA
-(the current setup). Install for it: git, Docker, Kind (or k3d), kubectl, Tilt,
+(the current setup). Install for it: git, Docker, Kind (the managed worker supports
+Kind only; k3d survives just in the legacy exclusive runner path), kubectl, Tilt,
 Node 22 + pnpm 9, mongosh,
 python3, Playwright's Chromium with system deps
 (`pnpm dlx playwright install --with-deps chromium`), and Codex CLI **0.153 or newer**.
@@ -167,18 +170,16 @@ CODEX_BIN=/usr/local/bin/codex
 QA_CLUSTER_DRIVER=kind
 QA_MODEL=gpt-6-astra
 QA_EFFORT=high
-QA_STOP_SERVICES='zora-web.service zora-tilt.service'
+# Disable old permanent development services during provisioning, never per job.
 QA_NODE_IMAGE='kindest/node:v1.37.0'  # preferably pin your installed image digest
 TILT_PORT=10350
 ```
 
-QA stops the configured development services and any running Docker-based Kind
-or k3d clusters before creating its own cluster. It never restarts the old environment. Unknown processes occupying QA ports cause an INCOMPLETE result.
-The web server uses `--strictPort` so a different app on 5173 cannot silently
-be tested. The runner stops only processes and clusters it started.
-Tilt and the web app listen on `127.0.0.1:10350` and `127.0.0.1:5173` on the VPS (the
-browser reaches the web app as `localhost:5173`); these URLs do not belong in the laptop
-configuration.
+Concurrent jobs never stop development services or other clusters. Provision the worker
+with permanent development services disabled before admissions. Each job owns a private
+Kind cluster, kubeconfig, network namespace, checkout, data and staging directory.
+Tilt and the web app keep ports 10350/5173 inside the namespace; these are private worker
+URLs, not laptop URLs. The web server retains `--strictPort`.
 
 The Linux wrappers supplied per job keep kubectl on the job's kubeconfig.
 Install `mongosh` on the host (`npm install -g mongosh`) so scripts in the QA
@@ -267,26 +268,152 @@ The browser uses `http://localhost:5173`, because Clerk returns there after sign
 two hosts. An improvised forwarding proxy broke that return leg in an early job: the
 server had signed the user in, but the page never arrived.
 
-## Dedicated QA VPS: idle between jobs
+## Worker inventory and durable attempts
 
-The permanent `zora-tilt` and `zora-web` services are disabled. The old `zora`
-Kind container is stopped, with its data preserved. Docker remains available.
-While holding the single-job lock, the runner stops configured development services
-and running containers labelled as Kind or k3d clusters, then checks QA ports.
-It does not delete other clusters. Failure to stop a cluster becomes INCOMPLETE;
-QA does not proceed into a conflicting environment. Unrelated processes on QA ports
-are still reported rather than killed indiscriminately.
-After QA, only the job's cluster/processes are removed. Nothing is restored or
-started between jobs. The old QA_PAUSE_SERVICES setting is accepted as a legacy
-alias for the stop list; it no longer implies restoration.
+Set `ZORA_QA_WORKERS_FILE=/absolute/path/workers.json` in laptop `qa.env`:
 
-Disk cleanup:
-- **After each job**, once the result is packaged, the runner deletes that job's checkout
-  (`work/`, about 3 GB, with copies of the runtime `.env` files) and Codex's `scratch/`.
-  Set `QA_KEEP_WORK=1` in `vm.env` to keep them for debugging. `QA_KEEP_CLUSTER=1` also
-  keeps them, because the cluster mounts `work/tilt/data`.
-- **Before each job**, under the lock, it keeps the newest `QA_KEEP_JOBS` job folders
-  (default 10) and deletes older ones. It clears any checkout a crashed job left behind,
-  and removes dangling Docker images and build cache older than 7 days.
-- **What stays on the VM** is `in/`, `out/`, `result.tar.gz` and `job.log`. The laptop
-  keeps its own copy of every result in the run folder, so nothing there is ever pruned.
+```json
+{
+  "default_worker": "vps-1",
+  "workers": [
+    {"id": "vps-1", "host": "root@2.25.183.46", "home": "/root/zora-qa"},
+    {"id": "vps-2", "host": "zora-qa-second", "home": "/root/zora-qa"}
+  ]
+}
+```
+
+Use `--worker vps-1` to select a worker. Without an inventory, the existing
+`ZORA_QA_HOST` and `ZORA_QA_REMOTE_HOME` configure the `vps-1` alias. There is no
+automatic scheduler or fallback to another worker after ambiguous transport errors.
+
+Before upload, the dispatcher writes immutable expected metadata to
+`$RUN/qa/<job-id>/attempts/<attempt-id>/dispatch.json`. It binds the exact commits,
+worker and environment IDs, charter hash, selected services and runner bundle hash.
+Uploads publish `in/` atomically; supervisor submission is idempotent. Queue wait does
+not spend a feature-fix or environment-rerun allowance.
+
+Reconnect using the printed absolute attempt directory, from any working directory:
+
+```bash
+run-codex-qa --status "$ATTEMPT"
+run-codex-qa --collect "$ATTEMPT"
+run-codex-qa --cancel "$ATTEMPT"
+verdict-check.sh "$ATTEMPT" "$PWD" --remote
+```
+
+These commands always use the recorded worker, even if laptop defaults change. Status
+and collection also support historical job directories; cancellation requires v4
+supervision. A local timeout or lost SSH response does not cancel or redispatch QA.
+Reconnect before deciding whether to request another attempt. The immutable dispatch
+record remains in place; collection timestamps go in `collection.json`.
+
+The checker requires v4 identity and hashes to match dispatch. Old manifests explicitly
+marked runner version 1–3 retain legacy validation. An incomplete v4 manifest cannot
+silently downgrade. Rung evidence must be listed in the manifest checksum inventory.
+Terminal status is published only after the result archive is available. Cleanup and
+slot quarantine remain separate from the product verdict.
+
+## Parallel worker operation
+
+The supervisor controls configured slots; two is the initial target, not a hardcoded
+maximum. Its systemd unit owns each attempt and recovery reconciles only owned resources.
+Never run global Docker pruning during active or retained attempts. Failed cleanup
+quarantines capacity; retained clusters continue to occupy their slots. Consult the
+worker configuration and tests alongside `qa-worker.py` for admission and retention
+settings. A second worker uses the same protocol and its own credentials and capacity.
+
+Example worker configuration (paths hold sandbox credentials; never commit their contents):
+
+```json
+{
+  "protocol_version": 4,
+  "worker_id": "vps-1",
+  "slots": 2,
+  "isolation": "netns",
+  "driver": "kind",
+  "subnet_base": "10.77",
+  "queue_timeout": 7200,
+  "run_timeout": 14400,
+  "preparation_timeout": 5400,
+  "validation_timeout": 7200,
+  "cleanup_timeout": 240,
+  "slot_memory_mb": 13000,
+  "host_reserve_mb": 5000,
+  "process_memory_max_mb": 8000,
+  "cluster_memory_max_mb": 5000,
+  "turbo_concurrency": 2,
+  "identity_bundles": {
+    "1": {"auth_file": "/root/zora-qa/auth.json", "identity_file": "/root/zora-qa/fixtures/identity.json"},
+    "2": {"auth_file": "/root/zora-qa/auth.json", "identity_file": "/root/zora-qa/fixtures/identity.json"}
+  },
+  "shared_identity_concurrency_verified": true
+}
+```
+
+The shared-identity setting is an explicit policy, permitted only after verifying
+concurrent test-account logins; otherwise configure distinct matching identity bundles.
+These memory reservations are initial trial budgets, not measured capacity guarantees.
+Confirm the network range does not overlap worker or Docker networks. Slot ownership
+and quarantine records live in `slots/*.json`; use the supervisor's `release <attempt-id>`
+command for retained environments instead of deleting ownership records manually.
+
+Kind is the supported parallel driver. `QA_NET_ISOLATION=none` requires a single slot;
+concurrent k3d is rejected. The runner sets `ZORA_TILT_STAGING_ROOT` to a private,
+host-visible staging directory. The Pantheon override is opt-in: ordinary developers
+keep their current paths, profiles, ports, and commands without configuration changes.
+Commits without the override require exclusive execution; never patch a frozen checkout.
+
+Configure matching authentication and seed identity files per slot, plus isolated sandbox
+integration configuration. Do not silently reuse a shared authentication account for
+concurrent jobs. Kubernetes separation does not isolate external queues, object storage,
+callbacks or sandbox providers; either isolate their mutable state or reserve exclusive
+access. The shared web-cache disabling and evidence redaction remain mandatory.
+
+Do not run `pnpm dev:tilt:clean` in a QA attempt: the existing developer shortcut
+performs host-wide Docker pruning. Use worker cancellation or release for owned cleanup.
+
+Root Codex agents and Docker share a trusted host. Network namespaces prevent accidental
+port collisions; they are not a security boundary against another root process.
+
+## Verification
+
+Run `python3 -B test-dispatcher.py` and `python3 -B test-extractor.py` locally;
+`python3 -B test-runner.py` and worker/network tests require Linux. Mock tests do not
+establish capacity or real cluster isolation. Before enabling a second slot, execute the
+real rollout gates in `docs/plans/parallel-features.md`: default Tilt compatibility,
+single-job regression, two distinct commits, data/rebuild isolation, overlapping build
+peaks, fair third-job queueing, cancellation/crash recovery, and complete cleanup.
+
+### Installing or updating the worker
+
+Copy `qa-worker.py` and `install-worker.sh` together to the VPS and prepare a private
+`worker.json` using the schema above. Run `bash install-worker.sh /root/zora-qa
+/path/to/worker.json` as root. The installer validates configuration, refuses active or
+retained reservations, backs up the previous supervisor/configuration, and installs a
+systemd reaper timer. Start with one slot. `subnet_base` is two IPv4 octets; each slot
+gets a separate /30 within its numbered third octet. `nsenter` from util-linux is required.
+
+The slot reservation must cover process plus cluster memory limits. A systemd attempt
+receives the account HOME explicitly so existing Git/Codex authentication remains
+available; secrets in `vm.env` are sourced before authoritative per-attempt settings.
+Run `qa-worker.py --home /root/zora-qa check` to validate installed settings. Use
+`release <attempt-id>` to release a retained environment after its unit finishes.
+
+QA workers default Turbo to two concurrent tasks via `TURBO_CONCURRENCY`, without
+changing Pantheon's Turbo configuration. A six-service trial reached validation but
+the initial 6,000 MiB process budget hit OOM during gates. The trial budget was
+rebalanced to 8,000 MiB processes plus 5,000 MiB cluster per 13,000 MiB slot. Treat
+these as profile-dependent trial settings until overlapping full QA passes. Worker
+telemetry includes systemd termination/OOM events, including after supervisor loss.
+
+### Optional live network regression
+
+On a Linux QA worker with spare capacity, run the following from this directory as root. Set the exact node image used by your worker; the script does not read `vm.env` or credentials.
+
+```bash
+QA_NODE_IMAGE='kindest/node:<version>@sha256:<digest>' \
+QA_PROOF_SUBNET='10.77.249.0/29' \
+  ./test-network-integration.sh
+```
+
+This explicitly creates two disposable Kind clusters. It verifies that both namespaces can serve different responses on localhost port 5173, that identically named ConfigMaps retain different values, and that deleting A leaves B healthy. Choose an unused aligned `/29`; existing route overlap is rejected. Unique names and ownership checks limit cleanup to this run's resources. Cluster operations and network setup/cleanup have bounded timeouts. Evidence stays under the printed `/tmp/zora-network-proof.*` directory; its kubeconfigs belong to the deleted test clusters. This test does not start Tilt, application services, or Codex and does not change worker slots or running QA jobs. Run it manually, separately from the normal mocked regression suite.
