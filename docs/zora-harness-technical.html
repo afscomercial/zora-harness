@@ -60,8 +60,8 @@ verdict-check.sh "$ATTEMPT" "$PWD" --remote</pre>
 <h2>Recovery and cleanup</h2><p class="ops-copy">systemd supervises each attempt. A reaper recovers interrupted jobs. Failed cleanup quarantines the slot; retained environments hold capacity until release or expiry.</p>
 </div><div>
 <h2>Regular Tilt stays unchanged</h2><p class="ops-copy">No Pantheon changes. Protocol 5 runs original commits inside mandatory sandboxes with private Docker and normal Tilt paths. No staging prerequisite or serial remote fallback.</p>
-<h2>Replacement acceptance pending</h2><p class="ops-copy">The earlier two-slot proof used shared Docker and a Pantheon change. Repeat full QA, private-daemon rebuild/prune isolation, crash recovery and aggregate capacity tests for the sandbox replacement.</p>
-<p class="note">Runtime isolation and real supervisor integration pass; two sandbox slots are installed. Full application QA, measured profile capacity and a second physical VPS remain unverified. Worker selection is explicit; automatic cross-worker balancing is not implemented.</p>
+<h2>Scoped isolation proof passed</h2><p class="ops-copy">Two original commits ran in private-Docker sandboxes. Removing A left B’s API, web and Kubernetes healthy; a third job admitted after slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown.</p>
+<p class="note">Runtime isolation and real supervisor integration pass; two sandbox slots are installed. Six-service scope only. A’s later browser observer had two transient failures (49/51 healthy), then recovered. Broader capacity, retention/reboot and a second VPS remain unverified. Worker selection is explicit; automatic cross-worker balancing is not implemented.</p>
 <p class="note"><a href="plans/parallel-features.md">Rollout record</a> · <a href="../skills/zora-cycle/qa/README.md">Operator guide</a></p>
 </div></div></section>
 </main>

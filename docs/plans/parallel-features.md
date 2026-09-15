@@ -3,7 +3,8 @@
 Last reconciled: **2026-09-15**. Stage 1 lane workflows are implemented on `main`.
 The user subsequently replaced the QA architecture: **harness/VPS-only isolation,
 with no Pantheon modifications**. Protocol-5 runtime isolation and real supervisor integration have passed; the worker
-is installed with two sandbox slots. Full application QA and capacity acceptance remain pending.
+is installed with two sandbox slots. Scoped two-environment isolation, queue admission and A teardown passed for the
+six-service profile. B passed all five rungs, the exact-source remote verdict checker, and clean teardown.
 
 ## Goal and current scope
 
@@ -13,7 +14,7 @@ queue; bootstrap is serialized and ready environments may validate concurrently.
 
 The first QA rollout depended on opt-in Pantheon staging changes. That approach is
 superseded. [Pantheon PR #1897](https://github.com/HouseNumbers/zora-pantheon/pull/1897)
-is to be closed unmerged. Feature branches must not merge or cherry-pick it for QA.
+is closed unmerged. Feature branches must not merge or cherry-pick it for QA.
 The replacement runs the original pushed commit and its existing Tilt configuration.
 
 ## Delivery tracker
@@ -22,15 +23,15 @@ The replacement runs the original pushed commit and its existing Tilt configurat
 |---|---|---|---|
 | L1 | Lane worktree creation, resume, ownership and per-lane gates | Complete | Implemented in `78b1375`; two-lane live verification remains. |
 | L2 | Exclusive local fallback environment across lanes | Complete | Existing local ownership claim and served-HEAD checks remain; this fallback is unaffected by mandatory remote sandboxes. |
-| Q1 | Worker routing, immutable dispatch, durable queue and reconnection | Retained; v5 verification pending | Keep UUID attempts, persisted routing, FIFO admission, collection lock and cancellation; validate with protocol 5. |
-| Q2 | Supervisor ownership, recovery, quarantine and retention | Adapting | Supervisor remains outside a separate sandbox unit; stop and prove sandbox resources gone before slot reuse. |
+| Q1 | Worker routing, immutable dispatch, durable queue and reconnection | Implemented; scoped live checks passed | Recorded routing and A collection passed; third job waited without a sandbox, then admitted only after A released capacity and cancelled cleanly. |
+| Q2 | Supervisor ownership, recovery, quarantine and retention | Implemented; scoped live checks passed | Runtime/supervisor integration, A teardown and queued-job cancellation passed. Live retention, reboot and injected cleanup-failure drills remain. |
 | Q3 | Pantheon staging prerequisite | Superseded | No Pantheon edits, staging override or capability-marker check; no serial remote fallback. |
 | Q4 | Private filesystem, process and network environment | Runtime proof passed | Private `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, HOME/tool state and process/network namespaces. Existing Tilt paths must work unchanged. |
 | Q5 | Private Docker daemon and storage | Runtime proof passed | Own socket, daemon, images, containers and build cache per attempt; no host Docker socket access. Verify standard Tilt builds and cleanup. |
-| Q6 | Capacity and telemetry | Remeasure | Proposed 13,000 MiB aggregate sandbox budget includes runner/browser, Docker/BuildKit and Kind; keep host headroom and profile admission. Prior split-budget measurements are historical. |
-| Q7 | Evidence and protocol compatibility | Adapting | New execution requires protocol 5 and a sandbox; retain checksummed identity and crash redaction. Historical artifacts are not proof of current isolation. |
+| Q6 | Capacity and telemetry | Measured for six-service profile | Deployed 13,000 MiB aggregate sandbox budget includes runner/browser, Docker/BuildKit and Kind; observed host headroom and no OOM for this pair. Broader profiles and repeated cold-build load remain unverified. |
+| Q7 | Evidence and protocol compatibility | Implemented; scoped live checks passed | Protocol-5 identity and redaction regressions pass; A archive collected with 102 files. Original INCOMPLETE verdict is preserved; B archive collected and exact-source remote checker PASS; both manifests report clean cleanup. |
 | Q8 | Test identity and external integration isolation | Retained / partial | Approved matching identity bundles; same account only under explicit concurrent-login policy. External mutable queues/storage/callbacks still need audit. |
-| Q9 | First VPS two-slot sandbox rollout | Pending acceptance | Repeat cold bootstrap, two commits, rebuild/prune isolation, crash, queue, retention and full teardown checks. |
+| Q9 | First VPS two-slot sandbox rollout | Scoped isolation acceptance passed | Distinct original commits, overlapping six-service environments, A removal with B still healthy, and third-job admission/cancel passed. B final archive/checker/teardown passed. Live retention/reboot and broader capacity remain. |
 | Q10 | Second VPS | Pending | Worker inventory exists; repeat dispatch/collect/cancel and sandbox proof on another physical host. |
 | Q11 | Host maintenance and artifact GC | Partial | Installer exclusion exists; ownership-aware historical artifact cleanup and general maintenance interface remain. |
 
@@ -51,9 +52,9 @@ The replacement runs the original pushed commit and its existing Tilt configurat
   Persist ownership before creating resources. Aggregate sandbox limits account for
   Docker/BuildKit/Kind as well as runner/browser processes; descendants cannot escape
   accounting through the host daemon. On failure, stop writers before redaction.
-- **Capacity:** propose two 13,000 MiB reservations plus 5,000 MiB host headroom for
-  the 32,094 MiB VPS. This is a trial budget, not certification. Measure cold-build
-  disk growth and aggregate peaks before accepting two simultaneous feature environments.
+- **Capacity:** deployed two 13,000 MiB reservations plus 5,000 MiB host headroom on
+  the 32,094 MiB VPS. The six-service pair completed with measured headroom and no OOM.
+  Other profile pairs and repeated cold-build pressure still require measurement.
 - **Recovery:** cleanup validates ownership, stops the sandbox, unmounts owned mounts,
   removes private Docker storage/networking and checks absence. Failed proof quarantines
   the slot. Retained sandboxes occupy capacity until release/expiry. Do not prune host
@@ -76,7 +77,8 @@ Implementation sources: [dispatcher](../../skills/zora-cycle/qa/qa-dispatch.py),
 
 Runtime sandbox isolation and real supervisor lifecycle integration have passed on the
 VPS, and the protocol-5 worker is installed with two slots. Offline regressions passed:
-25 worker, 21 runner, 19 dispatcher, 7 sandbox and 3 extractor tests (75 total).
+25 worker, 21 runner, 19 dispatcher, 7 sandbox, 3 extractor and 11 test-environment
+tests (86 total).
 The sandbox checks are [test-sandbox.py](../../skills/zora-cycle/qa/test-sandbox.py);
 its live opt-in proof is [test-sandbox-integration.py](../../skills/zora-cycle/qa/test-sandbox-integration.py).
 These results do not certify the full application workload or its capacity.
@@ -87,14 +89,65 @@ not contain Playwright binaries. The harness now resolves `@playwright/test/cli`
 the exact checkout and installs Chromium before cluster creation, with
 `PLAYWRIGHT_BROWSERS_PATH` pinned to private HOME. Runner coverage includes this fix.
 
-The initial attempts `351ef357` and `f0e6bbf7` were cancelled and cleaned. Fresh attempts
-`154e1c24` and `14e7fc87` are preparing against original commits `80131b2` (web-app 3.30.0)
-and `8100c4f` (web-app 3.29.1). Full verdicts, concurrent build/prune behavior and
-aggregate capacity remain pending. Historical protocol-4 evidence is not replacement evidence.
+The initial `351ef357` attempt failed at browser setup; its queued companion
+`f0e6bbf7` was cancelled. Both were cleaned. The current application pair is A
+`154e1c24` at original commit `80131b2` (web-app 3.30.0) and B `00668be2` at original
+commit `8100c4f` (web-app 3.29.1); B supersedes the earlier `14e7fc87` attempt.
+No Pantheon files were changed to create these environments.
 
-[Harness PR #2](https://github.com/afscomercial/zora-harness/pull/2) is open; CI passed
-for commit `15d08a1` before the browser-install fix. The fix requires its own updated
-CI result. Pantheon PR #1897 closure remains pending.
+A's original verdict is **INCOMPLETE** because gateway tests lacked their CI setup
+environment. Its other rungs passed, including 6,184 web-app tests and 1,065 voice
+service tests. The harness now provides `qa-test-env.py`: it reads shared defaults from the exact commit's
+`.circleci/templates/job-definitions.yml` and service defaults from `.circleci/services.json`,
+then applies them to the child command only. It excludes `MONGO_TEST_URI`, which targets
+a standalone CI sidecar; the test suite uses its memory-server fallback instead.
+Turbo receives `--env-mode=loose`, matching the existing CI convention. Eleven regressions
+cover this helper. This correction does not turn A's original verdict into PASS;
+the supplemental rerun passed 37 files, 449 tests and one skipped test. B independently
+passed the same 449 tests with the full committed CI defaults.
+
+B has authenticated browser access. A was held before teardown for supplemental
+observation. Its original ten-minute window passed all 21 samples. A later observer
+recorded **51 samples: 49 healthy and two browser failures** at 19:52:08 UTC (reload
+timeout) and 19:52:38 UTC (`ERR_ABORTED`). These coincided with supplemental Turbo
+rebuilds; that timing suggests contention but does not establish the cause. Kubernetes,
+pods, canary and probe checks remained stable. The browser recovered for the final
+17 samples through 20:01:09 UTC. This was not uninterrupted browser health.
+
+Across 290 host-resource samples starting **18:56:27 UTC**, minimum available memory
+was **21.87 GiB**, minimum free disk **274.4 GiB**, and no OOM was observed. B's
+13-minute soak barrier was released at **19:50:56 UTC**. A's runner resumed at
+**20:01:11 UTC**, but a mirrored pause in its `nsenter` wrapper remained until approximately
+**20:04:40 UTC**; both were test-only holds. A cleanup completed at **20:05:12 UTC**:
+terminal status `done`, with its sandbox cgroup and Docker socket absent. A's collected archive contains 102 files (approximately
+16.5 MB); its original INCOMPLETE product verdict remains unchanged.
+
+At **20:05:50 UTC**, B was still validating: API HTTP 200, web HTTP 200, Kubernetes
+readiness OK, and the same original private Docker daemon identity. This
+proves A teardown did not remove B's active environment. B completed its 780-second soak: 32 health samples total, including 27 after barrier
+release, with zero violations and zero restarts. Its agent verdict is **PASS across
+all five rungs**, with the exact original commit and clean tracked files. B finished
+at **20:08:45 UTC**; its collected archive contains 83 files (approximately 11.45 MB).
+`verdict-check.sh --remote` run from B's exact source commit returned **PASS, exit 0**.
+A's checker correctly rejects its original INCOMPLETE rung 2; the supplemental passing
+results are additional evidence, not a rewritten verdict. Both manifests report clean
+cleanup, and A/B/third-attempt cgroups and Docker sockets are absent.
+
+Third attempt `48bb54d7` waited without a sandbox, was admitted at **20:05:18 UTC**
+only after A released its slot, and was cancelled at **20:05:19 UTC** with clean
+cleanup. Scoped two-environment isolation and queue acceptance passed. Live retention,
+full reboot, injected cleanup failures and other profile pairs remain unverified.
+
+Cold boot took approximately 37 minutes for A and 25 minutes for B. Storage I/O was
+the observed bottleneck, with no OOM observed at this point. These observations apply
+only to the selected six-service profile. B verdict verification and final teardown
+passed. The measured headroom covers this observed workload, not all-service or
+repeated-load capacity.
+
+[Harness PR #2](https://github.com/afscomercial/zora-harness/pull/2) is open.
+Linux CI passed all 86 regressions at `7d54a88`, including the browser-install and
+test-environment fixes. The superseded Pantheon PR #1897 is **closed unmerged**, confirmed after the scoped proof. No Pantheon change was required for this rollout.
+Historical protocol-4 evidence does not certify this replacement.
 
 | Gate | Required evidence |
 |---|---|
@@ -282,11 +335,12 @@ itself has syntax validation, not a separately recorded live rerun.
 
 ## Remaining work, in suggested order
 
-- [x] Implement mandatory protocol-5 sandbox execution; pass 75 offline regressions, live runtime isolation and real supervisor integration.
+- [x] Implement mandatory protocol-5 sandbox execution; pass 86 offline regressions, live runtime isolation and real supervisor integration.
 - [x] Drain old attempts and install the matching protocol-5 worker/runtime with two sandbox slots.
-- [ ] Complete full QA against original Pantheon commits; current application attempts are preparing.
+- [x] Complete scoped two-commit isolation/queue proof, B full QA and exact-source verdict verification, and A/B/third cleanup. Preserve A original INCOMPLETE plus supplemental passing tests.
 - [ ] Repeat two-slot, different-commit and real Docker rebuild/prune isolation acceptance.
-- [ ] Remeasure aggregate memory/disk and certify intended profile pairs; exercise a third queued job.
+- [x] Record six-service memory/disk headroom and third-job admission/cancellation after A teardown.
+- [ ] Certify other profile pairs and repeated cold-build load; B final result/teardown verification is complete.
 - [ ] Run crash, SSH-loss, cleanup-failure, retention and reboot recovery drills.
 - [ ] Audit external mutable integrations and implement ownership-aware host maintenance/GC.
 - [ ] Provision and test a second physical worker; automatic scheduling remains out of scope.

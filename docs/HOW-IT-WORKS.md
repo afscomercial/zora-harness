@@ -157,14 +157,17 @@ fallback. This does not change the lane's existing exclusive local-validator fal
 sandbox unit, and reconciles its processes, mounts, private daemon/storage and network.
 The sandbox's Docker commands cannot select the host daemon by default. Private
 Docker/BuildKit and Kind resource use belongs in the aggregate sandbox memory budget;
-the initial 13,000 MiB proposal needs measurement. Host-wide cleanup remains operator-only.
+the deployed 13,000 MiB budget has scoped six-service measurements; other profile pairs need measurement. Host-wide cleanup remains operator-only.
 
 **Worker expansion and proof.** `ZORA_QA_WORKERS_FILE` configures named workers,
 selected with `--worker`. Reconnection uses the recorded destination. Automatic
 balancing is not implemented. Two six-service environments passed the previous
 shared-Docker design; those results are historical. Runtime isolation and real supervisor lifecycle integration now pass; two sandbox
-slots are installed. Full application, rebuild, queue and capacity acceptance remain
-pending for the replacement.
+slots are installed. Scoped six-service isolation and queue acceptance now pass: distinct original
+commits overlapped; removing A left B's API/web/Kubernetes healthy with the same private
+daemon; a third job admitted after A released capacity and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown. A's supplemental browser observer recorded 49/51 healthy samples,
+with recovery after two transient failures. Broader capacity, retention and reboot drills
+remain unverified.
 A second physical VPS remains unverified.
 
 See the [QA setup and operator guide](../skills/zora-cycle/qa/README.md) and

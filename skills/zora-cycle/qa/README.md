@@ -13,7 +13,8 @@ Codex is **not** a Claude Code subagent. The dispatcher is the only interface.
 all new remote execution. No Pantheon changes or staging marker are required, and
 there is no serial remote compatibility path. The prior protocol-4 two-slot proof is
 historical. Protocol-5 runtime isolation and supervisor integration pass, and two
-sandbox slots are installed; full application QA/capacity acceptance remains pending. The lane's local-validator fallback
+sandbox slots are installed. Scoped six-service isolation and queue acceptance pass;
+B's PASS is verified against its exact source commit and cleanup is complete. Broader capacity remains unverified. The lane's local-validator fallback
 remains available under its existing exclusive-environment ownership rules.
 
 ```
@@ -43,6 +44,7 @@ verdict-check.sh --remote → lead judges
 | `codex-qa-prompt.md` | VM (sent each job) | Codex's standing instructions — the validator protocol for Linux/Kubernetes |
 | `charter.template.md` | laptop | What the lead fills in per run |
 | `verdict.schema.json` | VM (sent each job) | Forces Codex's final message into the `verdict.json` shape |
+| `qa-test-env.py` | Sandbox | Reads committed shared/service CI test defaults and applies them only to the requested test child process |
 | `qa-browser.cjs` | VM (sent each job) | The browser network boundary: loopback and approved auth origins only, self-tested before Codex starts |
 | `redact-evidence.py` | VM (sent each job) | Scrubs every known secret value (runner env, `secrets/`, the QA password) and token-shaped strings from the output before it is hashed; Tilt echoes build args and pod env values |
 
@@ -222,9 +224,20 @@ setup can be called fully verified.
   HTTP 200 from the web app, then failed the browser boundary self-test because the
   private HOME had no Playwright binaries. Exact-checkout browser installation and
   pinned `PLAYWRIGHT_BROWSERS_PATH` now address that setup failure. The failed attempts
-  were cancelled and cleaned; fresh full-QA attempts are pending, so this boot is not
-  a completed QA verdict.
+  were cleaned (the browser-failed attempt failed; its companion was cancelled).
+  Subsequent full-QA attempts remain under validation; this boot is not a completed verdict.
 
+- Service tests may require shared defaults in `.circleci/templates/job-definitions.yml`
+  and service defaults in `.circleci/services.json`. `qa-test-env.py` reads both from
+  the exact HEAD and supplies defaults only to the requested child command, preserving
+  sandbox control variables and the parent environment. It excludes `MONGO_TEST_URI`,
+  whose standalone CI sidecar is absent here; the suite uses its memory-server fallback. Use Turbo `--env-mode=loose` as the
+  existing CI does so those defaults reach the test process. Never patch the checkout
+  or weaken a failing test to compensate for missing setup. Gateway setup caused an
+  initial INCOMPLETE result, which remains recorded. The corrected supplemental run
+  passed 37 files/449 tests with one skip; B independently passed the same 449 tests.
+  A teardown preserved B's API/web/Kubernetes health and private daemon; queued admission
+  followed slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown.
 - Fresh clones build the web app's workspace dependencies before startup, including
   on lean infrastructure profiles: `pnpm turbo build --filter="web-app^..."`.
 - Evidence may include `.html` page captures and `.cjs` replay scripts. They are
@@ -343,7 +356,7 @@ initial target. The host supervisor owns admission/queue state, a separate sandb
 unit, cleanup and recovery. Only attempt-owned resources are removed. Failed cleanup
 quarantines capacity; retention holds its slot until expiry or explicit release.
 
-Example worker configuration (credentials remain private; these are trial budgets):
+Deployed worker configuration (credentials remain private; capacity verified only for the tested six-service pair):
 
 ```json
 {
@@ -375,8 +388,9 @@ The retained process/cluster configuration keys sum to `QA_SANDBOX_MEMORY_MB`:
 13,000 MiB for the aggregate sandbox, including runner, browser, Docker/BuildKit
 and Kind. Admission reservations must cover that total; host headroom remains
 separate. The earlier shared-daemon split-budget measurements do not certify this
-replacement. Measure aggregate cold-build memory and disk growth before accepting
-two full environments. Turbo concurrency remains two through the harness environment.
+replacement. Current aggregate observations show headroom and no OOM for the
+tested six-service pair; measure other profile pairs and repeated cold-build pressure
+before expanding that capacity claim. Turbo concurrency remains two through the harness environment.
 
 The same test account is permitted only under the explicit concurrent-login policy;
 otherwise configure distinct matching auth/seed bundles. Sandbox namespaces and
@@ -425,7 +439,8 @@ processes, mounts, private Docker resources/storage and network ownership are go
 
 Run dispatcher/extractor regressions locally and the runner, worker and sandbox
 lifecycle regressions on Linux. Current offline coverage passes 25 worker, 21 runner,
-19 dispatcher, 7 sandbox (`test-sandbox.py`) and 3 extractor tests: 75 total.
+19 dispatcher, 7 sandbox (`test-sandbox.py`), 3 extractor and 11 test-environment
+tests: 86 total.
 `test-sandbox-integration.py` is the opt-in Linux/VPS runtime proof; it and the real
 supervisor lifecycle integration passed. These tests do not run the full application QA. Mocked tests do not establish live Docker/Kind
 isolation. See the [replacement acceptance tracker](../../../docs/plans/parallel-features.md)
@@ -435,6 +450,13 @@ aggregate capacity, third-job queue, crash, SSH-loss, retention and teardown gat
 The previous two-slot, six-service rollout passed under protocol 4 with a shared host
 Docker daemon and Pantheon staging changes. It is retained as historical evidence.
 The protocol-5 worker is installed with two sandbox slots. Runtime isolation and
-supervisor integration passed; full application QA and aggregate capacity are pending.
+supervisor integration passed. Scoped six-service isolation and queue acceptance pass:
+A cleanup removed its sandbox while B retained healthy API/web/Kubernetes responses and
+its original daemon. The third job admitted only after slot release and cancelled cleanly.
+A's original INCOMPLETE verdict is retained alongside its passing supplemental tests;
+its later browser observer had two transient failures (49/51 healthy), then recovered.
+B's final archive was collected and its exact-source remote checker passed; all owned
+A/B/third-attempt cgroups and sockets are absent. Broader capacity and live retention/
+reboot drills remain unverified. No claim of uninterrupted browser health is made.
 The old standalone network proof tests only networking and cannot certify private
 filesystem/process/daemon isolation. A second physical worker remains unverified.

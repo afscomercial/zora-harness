@@ -71,7 +71,7 @@ Two slots remain the initial capacity target:
   paths and image tags stay inside that sandbox, including during rebuilds and pruning.
 - Bootstrap is serialized to control resource peaks; ready attempts can validate
   concurrently. Further attempts queue. Aggregate sandbox memory includes the
-  runner, browser, Docker/BuildKit and Kubernetes; capacity must be remeasured.
+  runner, browser, Docker/BuildKit and Kubernetes; capacity is measured for the tested six-service profile; other combinations need validation.
 - SSH disconnection does not cancel the attempt. `--status`, `--collect` and
   `--cancel` reconnect using the printed attempt directory.
 - Ownership-based cleanup, quarantine and the reaper remain in the supervisor.
@@ -84,8 +84,10 @@ validator fallback remains part of the lane workflow when remote QA is unavailab
 Explicit worker inventory supports additional VPSs; automatic balancing is not
 implemented. The earlier two-slot six-service proof used the superseded shared-Docker
 and Pantheon staging approach. Protocol-5 runtime isolation and supervisor integration now pass, and two sandbox
-slots are installed. Full application QA/capacity and a second physical VPS remain
-unverified; the earlier proof does not certify those outcomes.
+slots are installed. Scoped isolation now passes for two distinguishable original commits using the
+six-service profile: A was removed while B's API, web and Kubernetes remained healthy;
+a third job admitted only after slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown. Supplemental A browser monitoring had two transient failures (49/51 healthy),
+then recovered; capacity beyond this profile and a second VPS remain unverified.
 
 See the [QA setup and operator guide](skills/zora-cycle/qa/README.md),
 [detailed flow](docs/HOW-IT-WORKS.md#qa-on-an-isolated-vm), and
