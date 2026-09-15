@@ -55,7 +55,7 @@
 <h2>Reconnect to the same attempt</h2>
 <pre class="ops-commands">run-codex-qa --status "$ATTEMPT"
 run-codex-qa --collect "$ATTEMPT"
-verdict-check.sh "$ATTEMPT" "$LANE" --remote</pre>
+verdict-check.sh "$ATTEMPT" "$PWD" --remote</pre>
 <p class="note">Use the printed absolute attempt directory. Collection never redispatches. To stop it deliberately: <code>run-codex-qa --cancel "$ATTEMPT"</code>.</p>
 <h2>Recovery and cleanup</h2><p class="ops-copy">systemd supervises each attempt. A reaper recovers interrupted jobs. Failed cleanup quarantines the slot; retained environments hold capacity until release or expiry.</p>
 </div><div>

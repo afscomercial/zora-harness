@@ -166,7 +166,7 @@ writes `$RUN/verdict.json`; check it with `verdict-check.sh "$RUN"`.
 **8. Judge.** Check the result mechanically first, from the repo root:
 
 ```bash
-bash ~/.claude/skills/zora-cycle/verdict-check.sh "$RUN/qa/<job-id>" --remote
+bash ~/.claude/skills/zora-cycle/verdict-check.sh "$ATTEMPT" --remote   # the attempt directory step 7 printed
 ```
 
 Exit 0 means the verdict says PASS **and** it holds: the VM validated exactly the commit

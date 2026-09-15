@@ -3,8 +3,9 @@
 #
 #   verdict-check.sh <run-dir> [repo-dir] [--remote]      (repo-dir defaults to the current directory)
 #
-# <run-dir> holds verdict.json. For a remote QA job it is the job folder
-# ($RUN/qa/<job-id>), which also holds remote-manifest.json and dispatch.json.
+# <run-dir> holds verdict.json. For a remote QA job it is the attempt folder
+# ($RUN/qa/<job-id>/attempts/<attempt-id>), which also holds remote-manifest.json
+# and dispatch.json.
 #
 # Always checks that the verdict holds for the working tree in front of it:
 #   - the verdict is for the current HEAD, and nothing uncommitted has changed since

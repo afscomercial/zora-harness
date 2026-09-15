@@ -16,7 +16,7 @@ freeze + push commit
 write $RUN/qa-charter.md
 run-codex-qa ──── ssh: upload bundle ─────────▶  qa-worker.py → qa-job.sh
                                                    clone at exact commit (detached)
-             ◀─── poll status ─────────────────    fresh Kind or k3d cluster + Tilt profile
+             ◀─── poll status ─────────────────    fresh Kind cluster + Tilt profile
                                                    web-app dev server, seed data
                                                    codex exec (Astra, full access)
              ◀─── result.tar.gz ───────────────    manifest + checksums, teardown
@@ -72,7 +72,8 @@ VM also avoids arm64 image builds, which is where local MongoDB Enterprise image
 have been fragile on Apple Silicon.
 
 **The SSH user.** A dedicated user such as `zqa`, or `root` on a VPS used only for QA
-(the current setup). Install for it: git, Docker, Kind (or k3d), kubectl, Tilt,
+(the current setup). Install for it: git, Docker, Kind (the managed worker supports
+Kind only; k3d survives just in the legacy exclusive runner path), kubectl, Tilt,
 Node 22 + pnpm 9, mongosh,
 python3, Playwright's Chromium with system deps
 (`pnpm dlx playwright install --with-deps chromium`), and Codex CLI **0.153 or newer**.
@@ -297,7 +298,7 @@ Reconnect using the printed absolute attempt directory, from any working directo
 run-codex-qa --status "$ATTEMPT"
 run-codex-qa --collect "$ATTEMPT"
 run-codex-qa --cancel "$ATTEMPT"
-verdict-check.sh "$ATTEMPT" "$LANE" --remote
+verdict-check.sh "$ATTEMPT" "$PWD" --remote
 ```
 
 These commands always use the recorded worker, even if laptop defaults change. Status
@@ -331,9 +332,11 @@ Example worker configuration (paths hold sandbox credentials; never commit their
   "isolation": "netns",
   "driver": "kind",
   "subnet_base": "10.77",
-  "queue_timeout": 21600,
-  "run_timeout": 10800,
-  "cleanup_timeout": 300,
+  "queue_timeout": 7200,
+  "run_timeout": 14400,
+  "preparation_timeout": 5400,
+  "validation_timeout": 7200,
+  "cleanup_timeout": 240,
   "slot_memory_mb": 13000,
   "host_reserve_mb": 5000,
   "process_memory_max_mb": 8000,

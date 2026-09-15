@@ -250,7 +250,9 @@ staging override run exclusively until the prerequisite is merged or cherry-pick
 
 ## Acceptance tracking
 
-These statuses refine the original section 2h gates. **Partial** means the full original
+These statuses refine the original rollout gates (developer compatibility, single-slot
+regression, two commits, data/rebuild isolation, capacity, queueing, crash recovery,
+cleanup and portability). **Partial** means the full original
 criterion is still open, even where useful live evidence exists.
 
 | Gate | Status | Evidence / remaining verification |

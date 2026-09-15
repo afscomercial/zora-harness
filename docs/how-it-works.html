@@ -384,7 +384,7 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
 <h3>Reconnect to the same attempt</h3>
 <div class="scroller"><pre><code>run-codex-qa --status "$ATTEMPT"
 run-codex-qa --collect "$ATTEMPT"
-verdict-check.sh "$ATTEMPT" "$LANE" --remote</code></pre></div>
+verdict-check.sh "$ATTEMPT" "$PWD" --remote</code></pre></div>
 <p>Use the printed absolute attempt directory. Collection does not start another execution. To stop that attempt deliberately, use <code>run-codex-qa --cancel "$ATTEMPT"</code>. Routing stays bound to its recorded worker.</p>
 <h3>The five validation steps</h3>
 <ol class="qa-rungs">
