@@ -168,6 +168,19 @@ class CheckerTests(unittest.TestCase):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_malformed_evidence_is_named_not_iterated(self):
+        """A string evidence value is a malformed verdict, not one failure per character."""
+        verdict = json.loads((self.run / 'verdict.json').read_text())
+        verdict['rungs'][0]['evidence'] = 'evidence/gates.txt'
+        (self.run / 'verdict.json').write_text(json.dumps(verdict))
+        self.m['files']['verdict.json'] = hashlib.sha256((self.run / 'verdict.json').read_bytes()).hexdigest()
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('evidence must be a list of paths', result.stdout)
+        # the old bug walked the string: one bogus complaint per character
+        self.assertNotIn('evidence file missing: e', result.stdout)
+        self.assertLessEqual(result.stdout.count('rung 1'), 1, result.stdout)
+
     def test_wrong_attempt_worker_or_hash_rejected(self):
         for key in ['attempt_id', 'worker_id', 'charter_sha256', 'bundle_sha256', 'profile']:
             with self.subTest(key=key):

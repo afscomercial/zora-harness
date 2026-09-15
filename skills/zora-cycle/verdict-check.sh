@@ -227,6 +227,11 @@ for n in (1, 2, 3, 4, 5):
     if status == "fail":
         problems.append(f"{label}: failed")
     evidence = r.get("evidence") or []
+    if not isinstance(evidence, list):
+        kind = "a string" if isinstance(evidence, str) else f"a {type(evidence).__name__}"
+        problems.append(f"{label}: evidence must be a list of paths, not {kind}: {evidence!r}. "
+                        "The verdict file is malformed — that is not the same as a broken QA run")
+        continue
     if not evidence:
         problems.append(f"{label}: ran but lists no evidence")
     for e in evidence:
