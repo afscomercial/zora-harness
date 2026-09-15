@@ -3,29 +3,37 @@
 A personal plan → implement → validate agent harness for the `zora-pantheon`
 monorepo.
 
-![Zora Harness workflow: develop in a dedicated feature lane, approve the plan, implement, run gates and push an exact commit. The VPS supervisor queues QA attempts into two isolated slots, each with private Docker, Kind, unchanged Tilt, a database and Codex. Startup is serialized; ready environments validate concurrently. Collect checksummed evidence, verify cleanup before reusing a slot, then let the lead judge the result and proceed to PR and green CI. No automatic merge.](docs/zora-harness.png)
+![Parallel feature development in Zora Harness: features A, B and C each have an independent worktree, plan, implementation, gates and run state. Their pushed commits enter a shared QA queue. Two reusable isolated QA slots on the current VPS run Codex with private Docker, Kind and unchanged Tilt. Startup is serialized; ready environments validate concurrently. Each feature receives its own evidence, verdict and PR. The two-slot limit applies to QA, not development.](docs/zora-harness.png)
 
-## The flow
+## Parallel development and QA
 
-1. **Develop in a feature lane.** Create or resume a dedicated worktree and run folder,
-   agree on the plan, implement it, and run the gates.
-2. **Push an exact commit for QA.** Send that commit and a QA charter to the selected
-   VPS. The supervisor queues the attempt until a slot is available.
-3. **Validate in an isolated environment.** Each slot owns its checkout, temporary
+**Multiple features can be developed at the same time. The current VPS can run two
+QA attempts concurrently; that limit does not cap the number of development lanes.**
+
+1. **Develop features in independent lanes.** Each feature has its own worktree,
+   plan, implementation, gates, run folder and history. Work in one lane can continue
+   while another feature is developing, waiting for QA or being validated.
+2. **Submit each feature's exact commit.** After its gates pass, push the commit and
+   send its QA charter to the selected VPS. Attempts from all lanes enter a shared
+   queue. A slot is assigned to an attempt, not permanently to a feature.
+3. **Run up to two QA attempts on this VPS.** Each slot owns a checkout, temporary
    files, HOME, processes, network, Docker daemon/storage, Kind cluster and database.
-   Existing Pantheon Tilt commands run unchanged. Startup is serialized; ready
-   environments run Codex QA concurrently.
-4. **Collect evidence and release the slot.** Verify the verdict, commit identity and
-   checksums. The supervisor confirms cleanup before admitting another attempt.
-5. **Review the result and ship through a PR.** The lead judges the evidence. PASS
-   proceeds to PR and CI; FAIL returns to a fix; INCOMPLETE repairs QA and retries the
-   same commit. The harness stops at green CI and does not automatically merge.
+   Existing Pantheon Tilt commands run unchanged. QA startup is serialized; ready
+   environments run Codex validation concurrently. Other attempts remain queued.
+4. **Keep results separate and release capacity.** Evidence and verdicts are bound
+   to the originating feature's exact commit and attempt. The supervisor verifies
+   cleanup before reusing a slot for the next queued attempt.
+5. **Review and deliver each feature independently.** The lead checks its evidence,
+   commit identity and checksums. PASS proceeds to that feature's PR and CI; FAIL
+   returns to a fix in that lane; INCOMPLETE repairs QA and retries the same commit.
+   The harness stops at green CI and does not automatically merge.
 
-Two slots are deployed on the current VPS. Additional requests queue; another VPS
-can be selected explicitly. See the [remote QA guide](skills/zora-cycle/qa/README.md).
+The two slots are shared across features, not a fixed pair of feature environments.
+Additional workers can be selected explicitly; automatic worker balancing is not
+implemented. See the [remote QA guide](skills/zora-cycle/qa/README.md).
 
-**All QA isolation is implemented in this harness and on the VPS. No Pantheon code
-or regular developer Tilt configuration changes are required.**
+**All harness isolation is implemented here and on the VPS. No Pantheon code or
+regular developer Tilt configuration changes are required.**
 
 The real files live here, outside the repo. `install.sh` symlinks them into
 `~/.claude/`, which Claude Code reads from **any** working directory — so the

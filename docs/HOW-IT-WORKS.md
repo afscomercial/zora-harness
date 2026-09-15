@@ -6,6 +6,14 @@ agents are kept honest.
 
 ---
 
+## Parallel feature development and QA capacity
+
+Multiple features can develop concurrently in independent worktrees, each with its
+own plan, implementation, gates and run state. Their exact commits enter a shared
+QA queue. The current VPS admits two QA attempts at once; this limits QA concurrency,
+not the number of development lanes. Slots are reusable across features. Evidence,
+verdicts and PRs remain separate for each feature.
+
 ## 1. Orchestration: what's actually driving this
 
 ### The pattern
