@@ -36,16 +36,21 @@ The VM runner already created a fresh isolated Kubernetes cluster, started the s
 web-app dev server, and seeded test data or delegated seeding to you (see the environment
 block). You own only this attempt's environment:
 
-- Use the supplied kubeconfig/context and private checkout, staging and scratch paths.
-  Other QA attempts may be running on the same host. Never stop shared systemd services,
-  change host networking, delete other clusters or run global Docker prune commands
-  (including the repository shortcut `pnpm dev:tilt:clean`).
-- Do not leave the assigned network namespace or replace its tool wrappers. Record the
+- Use the supplied kubeconfig/context, Docker endpoint, checkout and scratch paths.
+  This protocol-5 sandbox owns its Docker daemon/storage, processes, networking,
+  HOME/tool state, `/tmp`, `/var/tmp`, `/run` and `/dev/shm`. Normal Tilt staging
+  paths are private. Test the original commit; never patch Tilt for isolation or
+  require a staging-support marker.
+- Do not leave the sandbox, replace its wrappers, access the host Docker socket,
+  change host networking, stop host services or target another attempt. Record
   deployed image IDs when investigating behavior or crashes.
+- Routine cleanup belongs to the worker. Run private-daemon prune or developer
+  cleanup commands only when explicitly required by an isolation-test charter;
+  keep the supplied Docker endpoint so they cannot target the host daemon.
 - An OOM is evidence, not automatically an infrastructure excuse: preserve pod restart,
   memory and log observations. A reproducible feature memory regression can be a defect;
   ambiguous host pressure needs a controlled rerun with adequate capacity.
-- Root access on the shared host is a trust assumption; these instructions do not enforce
+- The shared host kernel remains a trust assumption; do not claim these instructions enforce
   a security boundary against other privileged jobs.
 
 - You may restart a crashed pod, port-forward or the web-app dev server to continue.

@@ -125,7 +125,8 @@ Validation normally runs as a remote job. Codex is never a Claude Code subagent;
 2. **Queue and reserve.** A systemd supervisor reserves capacity. The current VPS has
    two slots; further attempts wait. Queue time does not consume a feature-fix retry.
 3. **Prepare the environment.** Each attempt gets its own checkout, Kind cluster,
-   database, network namespace, kubeconfig, Tilt state, and staging paths. Bootstrap
+   database, private Docker daemon/storage, process/network namespaces, kubeconfig,
+   HOME/tool state, and private `/tmp`, `/var/tmp`, `/run`, `/dev/shm`. Bootstrap
    is serialized to limit resource peaks; this does not serialize the QA that follows.
 4. **Run Codex QA.** Ready environments validate concurrently through static gates,
    focused tests, API/database checks, authenticated browser testing, and adversarial
@@ -146,22 +147,29 @@ interrupted supervisors and reconciles owned resources. When remote QA is unavai
 the local Fable validator remains the fallback; check the remote attempt's status
 before deciding to rerun or fall back.
 
-**Developer compatibility.** Ordinary Tilt commands, paths, profiles, and ports stay
-unchanged. Parallel QA requires the opt-in
-[Pantheon staging prerequisite](https://github.com/HouseNumbers/zora-pantheon/pull/1897)
-in the feature commit. Older commits run exclusively, without patching their frozen
-checkout. Harness installation itself still adds no files to Pantheon.
+**Developer compatibility.** Protocol 5 requires a sandbox for every new remote
+attempt. The original pushed Pantheon commit runs unchanged: ordinary Tilt paths,
+commands, profiles, ports and cleanup commands resolve within the sandbox. There is
+no Pantheon PR, environment-variable prerequisite, staging marker or serial remote
+fallback. This does not change the lane's existing exclusive local-validator fallback.
 
-**Worker expansion.** `ZORA_QA_WORKERS_FILE` configures named workers, selected explicitly
-with `--worker`. Status, collection, and cancellation use the recorded worker even if
-the default changes. Automatic cross-worker balancing is not implemented. The live
-rollout verified two six-service environments at the same commit; larger profiles,
-different-commit pairs, and a second physical VPS remain separate acceptance work.
+**Ownership boundary.** The host supervisor reserves the slot, starts a separate
+sandbox unit, and reconciles its processes, mounts, private daemon/storage and network.
+The sandbox's Docker commands cannot select the host daemon by default. Private
+Docker/BuildKit and Kind resource use belongs in the aggregate sandbox memory budget;
+the initial 13,000 MiB proposal needs measurement. Host-wide cleanup remains operator-only.
+
+**Worker expansion and proof.** `ZORA_QA_WORKERS_FILE` configures named workers,
+selected with `--worker`. Reconnection uses the recorded destination. Automatic
+balancing is not implemented. Two six-service environments passed the previous
+shared-Docker design; those results are historical. Runtime isolation and real supervisor lifecycle integration now pass; two sandbox
+slots are installed. Full application, rebuild, queue and capacity acceptance remain
+pending for the replacement.
+A second physical VPS remains unverified.
 
 See the [QA setup and operator guide](../skills/zora-cycle/qa/README.md) and
-[parallel QA plan and rollout results](plans/parallel-features.md). Network namespaces
-prevent accidental collisions between trusted jobs; root agents still share the Docker
-host. QA must not invoke global cleanup such as `pnpm dev:tilt:clean`.
+[parallel QA plan and rollout results](plans/parallel-features.md). Sandboxes isolate
+trusted QA workloads on one kernel; they do not make compromised host root trustworthy.
 
 ### Where the files live
 

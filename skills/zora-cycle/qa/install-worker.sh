@@ -7,7 +7,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 home=$1
 config=$2
 [[ "$home" =~ ^/[A-Za-z0-9_./-]+$ ]] && [[ "$home" != / ]] && [[ "$home" != *..* ]] || exit 2
-for tool in python3 systemd-run systemctl ip iptables kind docker flock nsenter; do command -v "$tool" >/dev/null; done
+for tool in python3 systemd-run systemctl ip iptables kind docker dockerd flock nsenter unshare mount; do command -v "$tool" >/dev/null; done
 mkdir -p "$home/slots" "$home/jobs" "$home/backups"
 exec 9> "$home/.admission.lock"
 flock 9

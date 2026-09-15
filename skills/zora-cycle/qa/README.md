@@ -9,14 +9,21 @@ The verdict and evidence come back as files; the lead checks them with
 
 Codex is **not** a Claude Code subagent. The dispatcher is the only interface.
 
+**Current replacement:** protocol 5 requires a private sandbox and Docker daemon for
+all new remote execution. No Pantheon changes or staging marker are required, and
+there is no serial remote compatibility path. The prior protocol-4 two-slot proof is
+historical. Protocol-5 runtime isolation and supervisor integration pass, and two
+sandbox slots are installed; full application QA/capacity acceptance remains pending. The lane's local-validator fallback
+remains available under its existing exclusive-environment ownership rules.
+
 ```
 laptop (Claude Code lead)                        QA VM (dedicated, disposable jobs)
 ─────────────────────────                        ──────────────────────────────────
 freeze + push commit
 write $RUN/qa-charter.md
-run-codex-qa ──── ssh: upload bundle ─────────▶  qa-worker.py → qa-job.sh
+run-codex-qa ──── ssh: upload bundle ─────────▶  qa-worker.py → sandbox → qa-job.sh
                                                    clone at exact commit (detached)
-             ◀─── poll status ─────────────────    fresh Kind cluster + Tilt profile
+             ◀─── poll status ─────────────────    private Docker + Kind + normal Tilt profile
                                                    web-app dev server, seed data
                                                    codex exec (Astra, full access)
              ◀─── result.tar.gz ───────────────    manifest + checksums, teardown
@@ -30,7 +37,8 @@ verdict-check.sh --remote → lead judges
 |---|---|---|
 | `run-codex-qa` / `qa-dispatch.py` | laptop | Preflight, durable routing, atomic upload, submit, status, collect, cancel |
 | `qa-worker.py` | VM | Versioned supervisor, durable queue, slot ownership and recovery |
-| `qa-network.sh` | VM | Attempt-owned Kind network namespace |
+| `qa-network.sh` | VM | Attempt-owned sandbox network lifecycle |
+| `qa-sandbox.sh` | VM | Private namespaces, Docker daemon/storage, sandbox unit and identity verification |
 | `qa-job.sh` | VM | Builds the environment, runs Codex, writes the manifest |
 | `codex-qa-prompt.md` | VM (sent each job) | Codex's standing instructions — the validator protocol for Linux/Kubernetes |
 | `charter.template.md` | laptop | What the lead fills in per run |
@@ -39,8 +47,9 @@ verdict-check.sh --remote → lead judges
 | `redact-evidence.py` | VM (sent each job) | Scrubs every known secret value (runner env, `secrets/`, the QA password) and token-shaped strings from the output before it is hashed; Tilt echoes build args and pod env values |
 
 `qa-job.sh`, the prompt, the schema and the browser helper are uploaded with every job, so the VM always
-runs the harness version that dispatched it. Install the matching protocol-v4
-`qa-worker.py` supervisor on each worker before dispatching v4 bundles.
+runs the harness version that dispatched it. Install the matching protocol-5
+supervisor and sandbox runtime on each worker before dispatching v5 bundles. New
+execution and artifact verification reject v4; no historical protocol fallback is supported.
 
 ## What the laptop refuses before anything is sent
 
@@ -73,24 +82,25 @@ have been fragile on Apple Silicon.
 
 **The SSH user.** A dedicated user such as `zqa`, or `root` on a VPS used only for QA
 (the current setup). Install for it: git, Docker, Kind (the managed worker supports
-Kind only; k3d survives just in the legacy exclusive runner path), kubectl, Tilt,
+Kind only; no k3d or host/serial fallback), kubectl, Tilt,
 Node 22 + pnpm 9, mongosh,
 python3, Playwright's Chromium with system deps
 (`pnpm dlx playwright install --with-deps chromium`), and Codex CLI **0.153 or newer**.
 
 **Codex login.** As the SSH user: `codex login --device-auth`. `~/.codex/auth.json` is a live
-credential — `chmod 600`, never copied anywhere.
+credential — keep mode `0600`. Only the required authentication material may be
+provisioned privately into the sandbox HOME; never include it in bundles or evidence.
 
 **QA home** (`ZORA_QA_REMOTE_HOME`, e.g. `/root/zora-qa`):
 
 ```
-vm.env           CODEX_BIN, NPM_TOKEN (read-only), optional K3D_* / TILT_READY_TIMEOUT / QA_MODEL
+vm.env           CODEX_BIN, NPM_TOKEN (read-only), optional TILT_READY_TIMEOUT / QA_MODEL
 secrets/         sandbox-only copies of the gitignored runtime files, same relative paths:
                    apps/web-app/.env, apps/<service>/.env, tests/b2b-e2e/.env, ...
 hooks/seed.sh    optional; receives QA_WORK and QA_MONGO_URI. Without it, Codex seeds
                  by following .agents/skills/seed-local-db/SKILL.md
 cache/           created on the first job (bare mirror of the repo)
-jobs/            one folder per job; prune old ones periodically
+jobs/            one owned folder per attempt; remove only through ownership-aware maintenance
 ```
 
 Every file under `secrets/` must be gitignored in the repo; the runner refuses to place
@@ -114,12 +124,12 @@ Codex runs with `--sandbox danger-full-access` because it needs Docker, Kubernet
 browser, the filesystem and the network. That is only reasonable because **the VM is the
 trust boundary**, so the VM must hold nothing worth stealing:
 
-- **What full access really means.** Codex — and anything a prompt injection in product
-  output talks it into — can read everything on the VM: `~/.codex/auth.json`
-  (your Codex session), the GitHub credential, `vm.env` and every file it sources,
-  `auth.json`, `secrets/`, and other processes' environments. Running as root and being
-  in the `docker` group amount to the same thing. Isolation protects your laptop;
-  it does not protect the VM's own credentials.
+- **What full access means here.** Codex has full access within its attempt sandbox,
+  including the credentials supplied to that attempt, its processes and its private
+  Docker daemon. Private mount/process/network state and daemon storage isolate normal
+  QA operations from neighbors. They do not make a compromised host root trustworthy;
+  use sandbox-only credentials on a dedicated QA host. Never mount the host Docker
+  socket or substitute host paths to work around a failed sandbox operation.
 - **So limit what those credentials can do.** GitHub: read-only access to zora-pantheon
   only — a deploy key over SSH, or a fine-grained token (contents: read, this repository)
   for HTTPS — never a personal account's `gh` login, which can write to every repository
@@ -149,7 +159,7 @@ trust boundary**, so the VM must hold nothing worth stealing:
 
 ## Kind VPS configuration
 
-The runner supports `QA_CLUSTER_DRIVER=kind` in the VM's `vm.env`.
+The managed sandbox runner uses Kind through its own Docker daemon.
 Each job creates a unique Kind cluster, a private kubeconfig, and an empty data
 folder mounted at the path expected by the repo's MongoDB volume. It does not
 reuse or delete the usual development cluster or its database.
@@ -176,8 +186,9 @@ TILT_PORT=10350
 ```
 
 Concurrent jobs never stop development services or other clusters. Provision the worker
-with permanent development services disabled before admissions. Each job owns a private
-Kind cluster, kubeconfig, network namespace, checkout, data and staging directory.
+with adequate host headroom before admissions. Each job owns a private Docker daemon,
+Kind cluster, kubeconfig, process/network namespaces, checkout/data, temporary files
+and HOME/tool state. Existing staging paths are private without changing Pantheon.
 Tilt and the web app keep ports 10350/5173 inside the namespace; these are private worker
 URLs, not laptop URLs. The web server retains `--strictPort`.
 
@@ -195,7 +206,7 @@ codex login --device-auth
 codex login status
 ```
 
-An unauthenticated Codex fails before pausing services or creating a cluster.
+An unauthenticated Codex fails before creating its application cluster.
 A dispatcher dry run validates the charter and local Git state only; it does
 not establish VPS readiness. A first real job must return evidence before the
 setup can be called fully verified.
@@ -302,34 +313,32 @@ verdict-check.sh "$ATTEMPT" "$PWD" --remote
 ```
 
 These commands always use the recorded worker, even if laptop defaults change. Status
-and collection also support historical job directories; cancellation requires v4
-supervision. A local timeout or lost SSH response does not cancel or redispatch QA.
+and collection use the attempt metadata; cancellation requires the matching supervisor.
+The protocol-5 dispatcher and checker reject historical v4 artifacts as well as v4
+execution; the historical documentation is not a collection compatibility promise. A local timeout or lost SSH response does not cancel or redispatch QA.
 Reconnect before deciding whether to request another attempt. The immutable dispatch
 record remains in place; collection timestamps go in `collection.json`.
 
-The checker requires v4 identity and hashes to match dispatch. Old manifests explicitly
-marked runner version 1–3 retain legacy validation. An incomplete v4 manifest cannot
-silently downgrade. Rung evidence must be listed in the manifest checksum inventory.
+The checker requires protocol-5 identity, sandbox evidence and hashes to match dispatch.
+Missing sandbox identity cannot silently downgrade to the old shared-host protocol. Rung evidence must be listed in the manifest checksum inventory.
 Terminal status is published only after the result archive is available. Cleanup and
 slot quarantine remain separate from the product verdict.
 
 ## Parallel worker operation
 
-The supervisor controls configured slots; two is the initial target, not a hardcoded
-maximum. Its systemd unit owns each attempt and recovery reconciles only owned resources.
-Never run global Docker pruning during active or retained attempts. Failed cleanup
-quarantines capacity; retained clusters continue to occupy their slots. Consult the
-worker configuration and tests alongside `qa-worker.py` for admission and retention
-settings. A second worker uses the same protocol and its own credentials and capacity.
+Every new attempt uses protocol 5 and `isolation: "sandbox"`. Two slots are the
+initial target. The host supervisor owns admission/queue state, a separate sandbox
+unit, cleanup and recovery. Only attempt-owned resources are removed. Failed cleanup
+quarantines capacity; retention holds its slot until expiry or explicit release.
 
-Example worker configuration (paths hold sandbox credentials; never commit their contents):
+Example worker configuration (credentials remain private; these are trial budgets):
 
 ```json
 {
-  "protocol_version": 4,
+  "protocol_version": 5,
   "worker_id": "vps-1",
   "slots": 2,
-  "isolation": "netns",
+  "isolation": "sandbox",
   "driver": "kind",
   "subnet_base": "10.77",
   "queue_timeout": 7200,
@@ -350,70 +359,70 @@ Example worker configuration (paths hold sandbox credentials; never commit their
 }
 ```
 
-The shared-identity setting is an explicit policy, permitted only after verifying
-concurrent test-account logins; otherwise configure distinct matching identity bundles.
-These memory reservations are initial trial budgets, not measured capacity guarantees.
-Confirm the network range does not overlap worker or Docker networks. Slot ownership
-and quarantine records live in `slots/*.json`; use the supervisor's `release <attempt-id>`
-command for retained environments instead of deleting ownership records manually.
+The retained process/cluster configuration keys sum to `QA_SANDBOX_MEMORY_MB`:
+13,000 MiB for the aggregate sandbox, including runner, browser, Docker/BuildKit
+and Kind. Admission reservations must cover that total; host headroom remains
+separate. The earlier shared-daemon split-budget measurements do not certify this
+replacement. Measure aggregate cold-build memory and disk growth before accepting
+two full environments. Turbo concurrency remains two through the harness environment.
 
-Kind is the supported parallel driver. `QA_NET_ISOLATION=none` requires a single slot;
-concurrent k3d is rejected. The runner sets `ZORA_TILT_STAGING_ROOT` to a private,
-host-visible staging directory. The Pantheon override is opt-in: ordinary developers
-keep their current paths, profiles, ports, and commands without configuration changes.
-Commits without the override require exclusive execution; never patch a frozen checkout.
+The same test account is permitted only under the explicit concurrent-login policy;
+otherwise configure distinct matching auth/seed bundles. Sandbox namespaces and
+private Docker do not isolate external queues, object storage or callbacks. Audit
+and partition their mutable state or reserve access for affected features.
 
-Configure matching authentication and seed identity files per slot, plus isolated sandbox
-integration configuration. Do not silently reuse a shared authentication account for
-concurrent jobs. Kubernetes separation does not isolate external queues, object storage,
-callbacks or sandbox providers; either isolate their mutable state or reserve exclusive
-access. The shared web-cache disabling and evidence redaction remain mandatory.
+### Repository and daemon boundary
 
-Do not run `pnpm dev:tilt:clean` in a QA attempt: the existing developer shortcut
-performs host-wide Docker pruning. Use worker cancellation or release for owned cleanup.
+The runner tests the original pushed Pantheon commit without modifying tracked files.
+Do not require, merge or cherry-pick the superseded staging PR. No staging marker,
+`ZORA_TILT_STAGING_ROOT` or old-commit exclusive execution path exists in new dispatches.
+Normal Tilt `/tmp` staging paths resolve privately. `/var/tmp`, `/run`, `/dev/shm`,
+HOME and tool state are also private. Each sandbox owns its Docker socket, data root,
+images and BuildKit cache; Kind creates and loads images inside that daemon.
 
-Root Codex agents and Docker share a trusted host. Network namespaces prevent accidental
-port collisions; they are not a security boundary against another root process.
-
-## Verification
-
-Run `python3 -B test-dispatcher.py` and `python3 -B test-extractor.py` locally;
-`python3 -B test-runner.py` and worker/network tests require Linux. Mock tests do not
-establish capacity or real cluster isolation. Before enabling a second slot, execute the
-real rollout gates in `docs/plans/parallel-features.md`: default Tilt compatibility,
-single-job regression, two distinct commits, data/rebuild isolation, overlapping build
-peaks, fair third-job queueing, cancellation/crash recovery, and complete cleanup.
+Use only the supplied Docker endpoint and kubeconfig. Never reach the host daemon,
+host namespaces or another attempt. The unchanged developer cleanup shortcut can
+only affect the private daemon when used inside the sandbox, but routine QA should
+leave lifecycle cleanup to worker cancellation/release. A dedicated isolation test
+may exercise private-daemon pruning with explicit charter instructions.
 
 ### Installing or updating the worker
 
-Copy `qa-worker.py` and `install-worker.sh` together to the VPS and prepare a private
-`worker.json` using the schema above. Run `bash install-worker.sh /root/zora-qa
-/path/to/worker.json` as root. The installer validates configuration, refuses active or
-retained reservations, backs up the previous supervisor/configuration, and installs a
-systemd reaper timer. Start with one slot. `subnet_base` is two IPv4 octets; each slot
-gets a separate /30 within its numbered third octet. `nsenter` from util-linux is required.
-
-The slot reservation must cover process plus cluster memory limits. A systemd attempt
-receives the account HOME explicitly so existing Git/Codex authentication remains
-available; secrets in `vm.env` are sourced before authoritative per-attempt settings.
-Run `qa-worker.py --home /root/zora-qa check` to validate installed settings. Use
-`release <attempt-id>` to release a retained environment after its unit finishes.
-
-QA workers default Turbo to two concurrent tasks via `TURBO_CONCURRENCY`, without
-changing Pantheon's Turbo configuration. A six-service trial reached validation but
-the initial 6,000 MiB process budget hit OOM during gates. The trial budget was
-rebalanced to 8,000 MiB processes plus 5,000 MiB cluster per 13,000 MiB slot. Treat
-these as profile-dependent trial settings until overlapping full QA passes. Worker
-telemetry includes systemd termination/OOM events, including after supervisor loss.
-
-### Optional live network regression
-
-On a Linux QA worker with spare capacity, run the following from this directory as root. Set the exact node image used by your worker; the script does not read `vm.env` or credentials.
+Drain/cancel/release old attempts and reconcile retained/quarantined resources first.
+Install the matching protocol-5 supervisor, installer and all required sandbox runtime
+files together. Prepare private `worker.json` using the schema above, then run:
 
 ```bash
-QA_NODE_IMAGE='kindest/node:<version>@sha256:<digest>' \
-QA_PROOF_SUBNET='10.77.249.0/29' \
-  ./test-network-integration.sh
+bash install-worker.sh /root/zora-qa /path/to/worker.json
+python3 /root/zora-qa/qa-worker.py --home /root/zora-qa check
 ```
 
-This explicitly creates two disposable Kind clusters. It verifies that both namespaces can serve different responses on localhost port 5173, that identically named ConfigMaps retain different values, and that deleting A leaves B healthy. Choose an unused aligned `/29`; existing route overlap is rejected. Unique names and ownership checks limit cleanup to this run's resources. Cluster operations and network setup/cleanup have bounded timeouts. Evidence stays under the printed `/tmp/zora-network-proof.*` directory; its kubeconfigs belong to the deleted test clusters. This test does not start Tilt, application services, or Codex and does not change worker slots or running QA jobs. Run it manually, separately from the normal mocked regression suite.
+The installer validates configuration, refuses live ownership, backs up configuration
+and installs the reaper. A separate `zora-qa-sandbox-<attempt-id>.service` runs the
+sandbox in its owned aggregate slice. The supervisor remains outside it so
+it can record failure, terminate writers, redact and package evidence after OOM/crash.
+Private HOME authentication and sourced `vm.env` are provided deliberately; the
+original host HOME and Docker socket must not become implicit fallback paths.
+
+Start rollout validation with one sandbox slot, then measure two. Reducing slot count
+is supported; disabling sandbox isolation is not. Use `release <attempt-id>` for
+retained environments instead of deleting slot records manually. Cleanup must prove
+processes, mounts, private Docker resources/storage and network ownership are gone.
+
+## Verification and rollout status
+
+Run dispatcher/extractor regressions locally and the runner, worker and sandbox
+lifecycle regressions on Linux. Current offline coverage passes 25 worker, 20 runner,
+19 dispatcher, 7 sandbox (`test-sandbox.py`) and 3 extractor tests: 74 total.
+`test-sandbox-integration.py` is the opt-in Linux/VPS runtime proof; it and the real
+supervisor lifecycle integration passed. These tests do not run the full application QA. Mocked tests do not establish live Docker/Kind
+isolation. See the [replacement acceptance tracker](../../../docs/plans/parallel-features.md)
+for original-commit, full QA, different-commit pair, actual build/prune isolation,
+aggregate capacity, third-job queue, crash, SSH-loss, retention and teardown gates.
+
+The previous two-slot, six-service rollout passed under protocol 4 with a shared host
+Docker daemon and Pantheon staging changes. It is retained as historical evidence.
+The protocol-5 worker is installed with two sandbox slots. Runtime isolation and
+supervisor integration passed; full application QA and aggregate capacity are pending.
+The old standalone network proof tests only networking and cannot certify private
+filesystem/process/daemon isolation. A second physical worker remains unverified.

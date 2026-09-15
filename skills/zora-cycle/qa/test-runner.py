@@ -19,13 +19,17 @@ class RunnerTests(unittest.TestCase):
         (self.job / 'job.log').touch()
         self.bin = self.root / 'bin'
         self.bin.mkdir()
-        self.env = dict(os.environ, PATH=str(self.bin)+':'+os.environ['PATH'])
+        self.env = dict(os.environ, PATH=str(self.bin)+':'+os.environ['PATH'], QA_MANAGED='1', QA_SANDBOX='1', QA_SLOT_ID='1', QA_NET_ISOLATION='netns', QA_CLUSTER_MEMORY_MAX_MB='5000')
+        (self.job/'in/qa-sandbox.sh').write_text('exit 0')
+        (self.job/'in/dispatch.json').write_text(json.dumps(dict(protocol_version=5,job_id='logical',attempt_id='regression',worker_id='vps-1',environment_id='regression',charter_sha256='c'*64,bundle_sha256='b'*64)))
+        (self.job/'in/redact-evidence.py').write_text('')
         self.args = ['--job','regression','--dir',str(self.job),'--repo','unused',
                      '--base','abc','--commit','abc','--profile','infrastructure']
         self.tool('docker', 'exit 0')
+        self.tool('kubectl', 'exit 0')
         self.tool('codex', 'if [ "$1" = --version ]; then echo mock; exit 0; fi\nexit 1')
         self.functions = self.root/'functions.sh'
-        self.functions.write_text(RUNNER.read_text().split('# Managed jobs execute')[0])
+        self.functions.write_text(RUNNER.read_text().split('# --- entrypoint ---')[0])
     def tearDown(self):
         self.tmp.cleanup()
     def tool(self, name, body):
@@ -47,34 +51,20 @@ class RunnerTests(unittest.TestCase):
         manifest=json.loads((self.job/'out/remote-manifest.json').read_text())
         self.assertFalse(manifest['codex']['ran'])
         self.assertIn('needs login',manifest['environment']['reason'])
-        self.assertEqual((self.job/'status').read_text().strip(),'failed')
+        self.assertEqual((self.job/'runner-status').read_text().strip(),'failed')
     def test_occupied_port_is_rejected(self):
         with socket.socket() as listener:
             listener.bind(('127.0.0.1',0)); listener.listen()
             port=listener.getsockname()[1]
-            result=self.run_functions(f'TILT_PORT={port}\nQA_STOP_SERVICES=""\nprepare_exclusive_environment')
+            result=self.run_functions(f'TILT_PORT={port}\nQA_STOP_SERVICES=""\ncheck_private_ports')
         self.assertNotEqual(result.returncode,0)
         self.assertIn(f'Port {port} is occupied',result.stderr)
-    def test_existing_cluster_is_stopped_not_deleted(self):
-        calls=self.root/'docker-calls'
-        records=[{'Id':'kind-node','Name':'/zora-control-plane','Config':{'Labels':{'io.x-k8s.kind.cluster':'zora'}}},
-                 {'Id':'app','Name':'/unrelated','Config':{'Labels':{}}},
-                 {'Id':'k3d-node','Name':'/k3d-old-server-0','Config':{'Labels':{'k3d.cluster':'old'}}}]
-        fixture=self.root/'containers.json'; fixture.write_text(json.dumps(records))
-        self.tool('docker', f'''printf '%s\\n' "$*" >> "{calls}"
-case "$1" in
- ps) echo 'kind-node app k3d-node' ;;
- inspect) cat "{fixture}" ;;
- stop) exit 0 ;;
- *) exit 1 ;;
-esac''')
-        result=self.run_functions('stop_existing_clusters')
-        self.assertEqual(result.returncode,0,result.stderr)
-        log=calls.read_text()
-        self.assertIn('stop --time 30 kind-node',log)
-        self.assertIn('stop --time 30 k3d-node',log)
-        self.assertNotIn('stop --time 30 app',log)
-        self.assertNotIn('rm ',log)
+    def test_direct_host_execution_is_rejected(self):
+        self.env.pop('QA_SANDBOX')
+        result=subprocess.run(['bash',str(RUNNER),*self.args],env=self.env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,2)
+        self.assertIn('requires a supervised private sandbox',result.stderr)
+
     def test_cleanup_never_restarts_old_environment(self):
         calls=self.root/'systemctl-calls'
         self.tool('systemctl',f'printf "%s\\n" "$*" >> "{calls}"')
@@ -91,17 +81,17 @@ esac''')
         self.assertEqual(mount['hostPath'],str(self.job/'work/tilt/data'))
         self.assertEqual(mount['containerPath'],'/mnt/mac'+str(self.job/'work/tilt/data'))
         self.assertIn(str(self.job/'kubeconfig'),calls.read_text())
-        self.assertIn('zora-qa-regression',calls.read_text())
+        self.assertIn('zora-qa-',calls.read_text())
 
     def test_managed_prepare_does_not_stop_shared_resources(self):
         calls=self.root/'shared-mutation'
         for tool in ('docker','systemctl'):
             self.tool(tool, f'touch "{calls}"; exit 1')
-        result=self.run_functions('QA_MANAGED=1\nprepare_exclusive_environment')
+        result=self.run_functions('QA_MANAGED=1\ncheck_private_ports')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertFalse(calls.exists())
 
-    def test_managed_kind_binds_host_gateway_and_checks_actual_kubeconfig(self):
+    def test_kind_uses_private_loopback_and_checks_actual_kubeconfig(self):
         calls=self.root/'kubectl-calls'
         self.tool('kind', 'exit 0')
         self.tool('nsenter', 'shift; exec \"$@\"')
@@ -111,7 +101,7 @@ esac''')
         result=self.run_functions('create_cluster')
         self.assertEqual(result.returncode,0,result.stderr)
         config=json.loads((self.job/'kind.json').read_text())
-        self.assertEqual(config['networking']['apiServerAddress'],'10.203.0.1')
+        self.assertEqual(config['networking']['apiServerAddress'],'127.0.0.1')
         self.assertNotIn('apiServerPort',config['networking'])
         self.assertIn(str(self.job/'kubeconfig'),calls.read_text())
         self.assertIn('get --raw=/readyz',calls.read_text())
@@ -124,7 +114,7 @@ esac''')
         self.assertEqual(result.stdout,'/correct slot-1')
 
     def test_managed_finalize_waits_for_supervisor_and_binds_manifest(self):
-        dispatch=dict(protocol_version=4,job_id='logical',attempt_id='regression',
+        dispatch=dict(protocol_version=5,job_id='logical',attempt_id='regression',
                       worker_id='vps-1',environment_id='regression',
                       charter_sha256='c'*64,bundle_sha256='b'*64)
         (self.job/'in/dispatch.json').write_text(json.dumps(dispatch))
@@ -226,23 +216,11 @@ if [ -n "${{TILT_PROFILE+x}}" ]; then echo "set:$TILT_PROFILE" > "{calls}.env"; 
         result=self.run_functions('LOCKED=true\nQA_KEEP_WORK=1\nfinalize')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertTrue((self.job/'work').exists())
-    def test_prune_keeps_recent_jobs_without_checkouts(self):
-        jobs=self.root/'jobs'
-        for i,name in enumerate(['old1','old2','recent1','recent2']):
-            d=jobs/name; (d/'work').mkdir(parents=True); (d/'out').mkdir()
-            os.utime(d,(1000+i,1000+i))
-        (self.job/'work').mkdir()
-        outside=self.root/'not-a-job'; outside.mkdir()
-        # The running job is made the oldest, so only the self-check can save it.
-        result=self.run_functions('QA_KEEP_JOBS=2\ntouch -d @1 "$DIR"\nprune_old_jobs')
-        self.assertEqual(result.returncode,0,result.stderr)
-        self.assertFalse((jobs/'old1').exists())
-        self.assertFalse((jobs/'old2').exists())
-        for name in ('recent1','recent2'):
-            self.assertTrue((jobs/name/'out').exists())
-            self.assertFalse((jobs/name/'work').exists())
-        self.assertTrue((self.job/'work').exists(), 'the running job is never pruned')
-        self.assertTrue(outside.exists())
+    def test_invalid_sandbox_never_starts_runner(self):
+        (self.job/'in/qa-sandbox.sh').write_text('exit 1')
+        result=subprocess.run(['bash',str(RUNNER),*self.args],env=self.env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,2)
+        self.assertFalse((self.job/'runner-status').exists())
 
 if __name__ == '__main__':
     unittest.main()
