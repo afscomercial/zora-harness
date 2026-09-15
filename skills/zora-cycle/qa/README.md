@@ -366,6 +366,9 @@ concurrent jobs. Kubernetes separation does not isolate external queues, object 
 callbacks or sandbox providers; either isolate their mutable state or reserve exclusive
 access. The shared web-cache disabling and evidence redaction remain mandatory.
 
+Do not run `pnpm dev:tilt:clean` in a QA attempt: the existing developer shortcut
+performs host-wide Docker pruning. Use worker cancellation or release for owned cleanup.
+
 Root Codex agents and Docker share a trusted host. Network namespaces prevent accidental
 port collisions; they are not a security boundary against another root process.
 

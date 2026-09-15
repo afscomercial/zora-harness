@@ -38,7 +38,8 @@ block). You own only this attempt's environment:
 
 - Use the supplied kubeconfig/context and private checkout, staging and scratch paths.
   Other QA attempts may be running on the same host. Never stop shared systemd services,
-  change host networking, delete other clusters or run global Docker prune commands.
+  change host networking, delete other clusters or run global Docker prune commands
+  (including the repository shortcut `pnpm dev:tilt:clean`).
 - Do not leave the assigned network namespace or replace its tool wrappers. Record the
   deployed image IDs when investigating behavior or crashes.
 - An OOM is evidence, not automatically an infrastructure excuse: preserve pod restart,
