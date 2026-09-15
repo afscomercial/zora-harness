@@ -71,6 +71,14 @@ class RunnerTests(unittest.TestCase):
         result=self.run_functions('LOCKED=true\nfinalize')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertFalse(calls.exists())
+    def test_browser_install_uses_private_home_and_propagates_failure(self):
+        calls=self.root/'browser-install'
+        self.env.update(HOME=str(self.job/'sandbox/home'), PLAYWRIGHT_BROWSERS_PATH='/host/cache')
+        self.tool('node', f'printf "%s" "$PLAYWRIGHT_BROWSERS_PATH" > "{calls}"; cat >/dev/null; exit 17')
+        result=self.run_functions('prepare_browser')
+        self.assertEqual(result.returncode,17)
+        self.assertEqual(calls.read_text(),str(self.job/'sandbox/home/.cache/ms-playwright'))
+
     def test_kind_mounts_only_job_data_and_uses_private_kubeconfig(self):
         calls=self.root/'kind-call'
         self.tool('kind',f'printf "%s\\n" "$@" > "{calls}"')

@@ -76,15 +76,25 @@ Implementation sources: [dispatcher](../../skills/zora-cycle/qa/qa-dispatch.py),
 
 Runtime sandbox isolation and real supervisor lifecycle integration have passed on the
 VPS, and the protocol-5 worker is installed with two slots. Offline regressions passed:
-25 worker, 20 runner, 19 dispatcher, 7 sandbox and 3 extractor tests (74 total).
+25 worker, 21 runner, 19 dispatcher, 7 sandbox and 3 extractor tests (75 total).
 The sandbox checks are [test-sandbox.py](../../skills/zora-cycle/qa/test-sandbox.py);
 its live opt-in proof is [test-sandbox-integration.py](../../skills/zora-cycle/qa/test-sandbox-integration.py).
 These results do not certify the full application workload or its capacity.
 
-Two full application attempts are preparing against distinguishable original commits:
-`80131b2` (web-app 3.30.0) and `8100c4f` (web-app 3.29.1). Their QA verdicts, concurrent
-build/prune behavior and aggregate capacity remain pending. The gates below require
-that broader acceptance; historical protocol-4 evidence is not replacement evidence.
+The first full application boot reached healthy selected Tilt services and web-app
+HTTP 200, then failed the browser boundary self-test: the sandbox's private HOME did
+not contain Playwright binaries. The harness now resolves `@playwright/test/cli` from
+the exact checkout and installs Chromium before cluster creation, with
+`PLAYWRIGHT_BROWSERS_PATH` pinned to private HOME. Runner coverage includes this fix.
+
+The initial attempts `351ef357` and `f0e6bbf7` were cancelled and cleaned. Fresh attempts
+`154e1c24` and `14e7fc87` are preparing against original commits `80131b2` (web-app 3.30.0)
+and `8100c4f` (web-app 3.29.1). Full verdicts, concurrent build/prune behavior and
+aggregate capacity remain pending. Historical protocol-4 evidence is not replacement evidence.
+
+[Harness PR #2](https://github.com/afscomercial/zora-harness/pull/2) is open; CI passed
+for commit `15d08a1` before the browser-install fix. The fix requires its own updated
+CI result. Pantheon PR #1897 closure remains pending.
 
 | Gate | Required evidence |
 |---|---|
@@ -272,7 +282,7 @@ itself has syntax validation, not a separately recorded live rerun.
 
 ## Remaining work, in suggested order
 
-- [x] Implement mandatory protocol-5 sandbox execution; pass 74 offline regressions, live runtime isolation and real supervisor integration.
+- [x] Implement mandatory protocol-5 sandbox execution; pass 75 offline regressions, live runtime isolation and real supervisor integration.
 - [x] Drain old attempts and install the matching protocol-5 worker/runtime with two sandbox slots.
 - [ ] Complete full QA against original Pantheon commits; current application attempts are preparing.
 - [ ] Repeat two-slot, different-commit and real Docker rebuild/prune isolation acceptance.

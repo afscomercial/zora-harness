@@ -212,7 +212,8 @@ exec)
     nsenter --target "$pid" --mount --net --pid --uts --ipc \
     env -u DOCKER_CONTEXT -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH \
       "DOCKER_HOST=$endpoint" "DOCKER_CONFIG=$state/home/.docker" "HOME=$state/home" \
-      "CODEX_HOME=$state/home/.codex" "XDG_CACHE_HOME=$state/home/.cache" \
+      "CODEX_HOME=$state/home/.codex" "PLAYWRIGHT_BROWSERS_PATH=$state/home/.cache/ms-playwright" \
+      "XDG_CACHE_HOME=$state/home/.cache" \
       "XDG_CONFIG_HOME=$state/home/.config" "XDG_DATA_HOME=$state/home/.local/share" \
       "XDG_STATE_HOME=$state/home/.local/state" "XDG_RUNTIME_DIR=/run/qa-runtime" \
       QA_SANDBOX=1 QA_INSIDE_NETNS=1 \

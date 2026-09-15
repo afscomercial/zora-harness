@@ -84,8 +84,13 @@ have been fragile on Apple Silicon.
 (the current setup). Install for it: git, Docker, Kind (the managed worker supports
 Kind only; no k3d or host/serial fallback), kubectl, Tilt,
 Node 22 + pnpm 9, mongosh,
-python3, Playwright's Chromium with system deps
-(`pnpm dlx playwright install --with-deps chromium`), and Codex CLI **0.153 or newer**.
+python3, Chromium's required Linux system libraries, and Codex CLI **0.153 or newer**.
+The runner resolves `@playwright/test/cli` from the exact checkout and runs its
+`install chromium` before creating the cluster. It installs the matching browser
+into private `$HOME/.cache/ms-playwright`; sandbox execution pins
+`PLAYWRIGHT_BROWSERS_PATH` there. A browser installed only in the host HOME is not
+available inside the sandbox. Provision system libraries separately and allow the
+browser download endpoint; inspect `evidence/0-browser-install.log` on failure.
 
 **Codex login.** As the SSH user: `codex login --device-auth`. `~/.codex/auth.json` is a live
 credential — keep mode `0600`. Only the required authentication material may be
@@ -212,6 +217,13 @@ not establish VPS readiness. A first real job must return evidence before the
 setup can be called fully verified.
 
 ### Smoke-test lessons
+
+- The first protocol-5 application boot reached healthy selected Tilt services and
+  HTTP 200 from the web app, then failed the browser boundary self-test because the
+  private HOME had no Playwright binaries. Exact-checkout browser installation and
+  pinned `PLAYWRIGHT_BROWSERS_PATH` now address that setup failure. The failed attempts
+  were cancelled and cleaned; fresh full-QA attempts are pending, so this boot is not
+  a completed QA verdict.
 
 - Fresh clones build the web app's workspace dependencies before startup, including
   on lean infrastructure profiles: `pnpm turbo build --filter="web-app^..."`.
@@ -412,8 +424,8 @@ processes, mounts, private Docker resources/storage and network ownership are go
 ## Verification and rollout status
 
 Run dispatcher/extractor regressions locally and the runner, worker and sandbox
-lifecycle regressions on Linux. Current offline coverage passes 25 worker, 20 runner,
-19 dispatcher, 7 sandbox (`test-sandbox.py`) and 3 extractor tests: 74 total.
+lifecycle regressions on Linux. Current offline coverage passes 25 worker, 21 runner,
+19 dispatcher, 7 sandbox (`test-sandbox.py`) and 3 extractor tests: 75 total.
 `test-sandbox-integration.py` is the opt-in Linux/VPS runtime proof; it and the real
 supervisor lifecycle integration passed. These tests do not run the full application QA. Mocked tests do not establish live Docker/Kind
 isolation. See the [replacement acceptance tracker](../../../docs/plans/parallel-features.md)

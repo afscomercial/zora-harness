@@ -102,6 +102,20 @@ for port in [int(sys.argv[1]), 5173, 27017, 30080, 30081, 30082, 30083, 30084, 3
 PORTS
 }
 
+prepare_browser() {
+  # Resolve the browser version from this exact checkout and install into private HOME.
+  export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"
+  QA_WORK="$WORK" node <<'BROWSER'
+const path = require('path');
+const { spawnSync } = require('child_process');
+const work = process.env.QA_WORK;
+const cli = require.resolve('@playwright/test/cli', { paths: [work, path.join(work, 'tests', 'b2b-e2e')] });
+const result = spawnSync(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exit(result.status === null ? 1 : result.status);
+BROWSER
+}
+
 create_cluster() {
   mkdir -p "$WORK/tilt/data/mongo"
   python3 - "$WORK" "$DIR/kind.json" <<'KIND'
@@ -214,6 +228,9 @@ prepare() {
 
   ( cd "$WORK" && pnpm install --frozen-lockfile ) > "$EVID/0-pnpm-install.log" 2>&1 \
     || { env_fail "pnpm install failed (evidence/0-pnpm-install.log)"; return 1; }
+
+  prepare_browser > "$EVID/0-browser-install.log" 2>&1 \
+    || { env_fail "private browser installation failed (evidence/0-browser-install.log)"; return 1; }
 
   # A fresh clone has no workspace dist files; lean Tilt profiles do not build them.
   ( cd "$WORK" && CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo build --filter="web-app^..." ) \
