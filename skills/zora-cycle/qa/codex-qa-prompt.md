@@ -191,3 +191,11 @@ these rules with a script, and a verdict that breaks one is not a pass, whatever
 
 You do not decide whether to ship. You hand the lead an evidence folder good enough that
 the decision is easy.
+
+## Worker resource budget
+
+Run memory-intensive gate/test commands sequentially within this attempt. The worker
+sets `TURBO_CONCURRENCY` for its measured capacity; preserve it and do not override it
+with `--parallel` or a higher concurrency. Other QA attempts may be validating nearby.
+If a gate is killed or the environment becomes unhealthy, preserve the evidence and
+report the interruption rather than silently skipping the gate or raising resource limits.
