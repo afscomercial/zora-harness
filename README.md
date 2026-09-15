@@ -3,11 +3,29 @@
 A personal plan → implement → validate agent harness for the `zora-pantheon`
 monorepo.
 
-![The ten steps of the zora-harness cycle: task and acceptance criteria, clean-branch check, plan (zora-planner on Fable), lead and user approval, implement (zora-implementer on Opus, test-first), lead reruns the gates and rebases, validate (zora-validator on Fable with fresh context — tests, then local APIs and database, then browser), lead judges the evidence, gates and open a PR, stop at green CI without merging. FAIL loops back to implement, at most two rounds; INCOMPLETE returns to validation. Below, the local user scope: zora-harness/ is symlinked by install.sh into ~/.claude/agents and skills, which Claude Code loads against the zora-pantheon main checkout served by Tilt, the service APIs, MongoDB and the web-app.](docs/zora-harness.png)
+![Zora Harness workflow: develop in a dedicated feature lane, approve the plan, implement, run gates and push an exact commit. The VPS supervisor queues QA attempts into two isolated slots, each with private Docker, Kind, unchanged Tilt, a database and Codex. Startup is serialized; ready environments validate concurrently. Collect checksummed evidence, verify cleanup before reusing a slot, then let the lead judge the result and proceed to PR and green CI. No automatic merge.](docs/zora-harness.png)
 
-The diagram shows the original single-checkout, local-validator flow. Work now happens in
-a per-feature lane worktree, and validation in the [two-slot remote QA
-flow](skills/zora-cycle/qa/README.md).
+## The flow
+
+1. **Develop in a feature lane.** Create or resume a dedicated worktree and run folder,
+   agree on the plan, implement it, and run the gates.
+2. **Push an exact commit for QA.** Send that commit and a QA charter to the selected
+   VPS. The supervisor queues the attempt until a slot is available.
+3. **Validate in an isolated environment.** Each slot owns its checkout, temporary
+   files, HOME, processes, network, Docker daemon/storage, Kind cluster and database.
+   Existing Pantheon Tilt commands run unchanged. Startup is serialized; ready
+   environments run Codex QA concurrently.
+4. **Collect evidence and release the slot.** Verify the verdict, commit identity and
+   checksums. The supervisor confirms cleanup before admitting another attempt.
+5. **Review the result and ship through a PR.** The lead judges the evidence. PASS
+   proceeds to PR and CI; FAIL returns to a fix; INCOMPLETE repairs QA and retries the
+   same commit. The harness stops at green CI and does not automatically merge.
+
+Two slots are deployed on the current VPS. Additional requests queue; another VPS
+can be selected explicitly. See the [remote QA guide](skills/zora-cycle/qa/README.md).
+
+**All QA isolation is implemented in this harness and on the VPS. No Pantheon code
+or regular developer Tilt configuration changes are required.**
 
 The real files live here, outside the repo. `install.sh` symlinks them into
 `~/.claude/`, which Claude Code reads from **any** working directory — so the
@@ -63,7 +81,7 @@ Codex (`gpt-6-astra`) runs the validation ladder; the lead checks the downloaded
 verdict and evidence with `verdict-check.sh --remote` before making the final call.
 
 The replacement worker uses **protocol 5 with mandatory per-attempt sandboxes**.
-Two slots remain the initial capacity target:
+Two slots are deployed on the current VPS:
 
 - Each attempt owns a checkout, Kind cluster and database, private process/network
   namespaces, `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, HOME and tool state.
@@ -82,12 +100,15 @@ no serial compatibility fallback or staging-support marker. The existing local
 validator fallback remains part of the lane workflow when remote QA is unavailable.
 
 Explicit worker inventory supports additional VPSs; automatic balancing is not
-implemented. The earlier two-slot six-service proof used the superseded shared-Docker
-and Pantheon staging approach. Protocol-5 runtime isolation and supervisor integration now pass, and two sandbox
-slots are installed. Scoped isolation now passes for two distinguishable original commits using the
-six-service profile: A was removed while B's API, web and Kubernetes remained healthy;
-a third job admitted only after slot release and cancelled cleanly. B passed all five rungs, the exact-source remote verdict checker, and clean teardown. Supplemental A browser monitoring had two transient failures (49/51 healthy),
-then recovered; capacity beyond this profile and a second VPS remain unverified.
+implemented. Two original commits ran concurrently with the selected six-service
+profile. Removing one environment left the other healthy, and a queued third attempt
+started only after a slot was released. The second run passed all five QA rungs,
+local evidence verification and clean teardown.
+
+The first run's supplemental browser checks recorded two transient failures
+(49/51 healthy), then recovered. Cold startup took approximately 25–37 minutes.
+Other service combinations and a second physical VPS still need validation; the
+[plan](docs/plans/parallel-features.md) records the evidence and remaining checks.
 
 See the [QA setup and operator guide](skills/zora-cycle/qa/README.md),
 [detailed flow](docs/HOW-IT-WORKS.md#qa-on-an-isolated-vm), and
