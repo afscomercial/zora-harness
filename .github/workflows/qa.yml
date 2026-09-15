@@ -16,6 +16,7 @@ jobs:
           bash -n skills/zora-cycle/qa/qa-job.sh
           bash -n skills/zora-cycle/qa/qa-network.sh
           bash -n skills/zora-cycle/qa/install-worker.sh
+          bash -n skills/zora-cycle/qa/test-network-integration.sh
           bash -n skills/zora-cycle/qa/run-codex-qa
           bash -n skills/zora-cycle/verdict-check.sh
       - name: Offline regression tests

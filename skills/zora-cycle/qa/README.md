@@ -399,3 +399,15 @@ the initial 6,000 MiB process budget hit OOM during gates. The trial budget was
 rebalanced to 8,000 MiB processes plus 5,000 MiB cluster per 13,000 MiB slot. Treat
 these as profile-dependent trial settings until overlapping full QA passes. Worker
 telemetry includes systemd termination/OOM events, including after supervisor loss.
+
+### Optional live network regression
+
+On a Linux QA worker with spare capacity, run the following from this directory as root. Set the exact node image used by your worker; the script does not read `vm.env` or credentials.
+
+```bash
+QA_NODE_IMAGE='kindest/node:<version>@sha256:<digest>' \
+QA_PROOF_SUBNET='10.77.249.0/29' \
+  ./test-network-integration.sh
+```
+
+This explicitly creates two disposable Kind clusters. It verifies that both namespaces can serve different responses on localhost port 5173, that identically named ConfigMaps retain different values, and that deleting A leaves B healthy. Choose an unused aligned `/29`; existing route overlap is rejected. Unique names and ownership checks limit cleanup to this run's resources. Cluster operations and network setup/cleanup have bounded timeouts. Evidence stays under the printed `/tmp/zora-network-proof.*` directory; its kubeconfigs belong to the deleted test clusters. This test does not start Tilt, application services, or Codex and does not change worker slots or running QA jobs. Run it manually, separately from the normal mocked regression suite.
