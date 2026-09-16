@@ -290,7 +290,7 @@ img{max-width:100%; display:block}
     <div class="grid g3">
       <div class="panel"><h3>Fresh context is the mechanism</h3><p class="note" style="margin-top:6px">The validator receives the spec and the diff — never the implementer's reasoning. An agent that talks itself into a shortcut while building will carry the same reasoning into checking its own work.</p></div>
       <div class="panel"><h3>A different model, deliberately</h3><p class="note" style="margin-top:6px">The implementer runs on Opus. QA runs on OpenAI's <code>gpt-5.6-sol</code> through Codex. A reviewer sharing the author's model shares the author's blind spots.</p></div>
-      <div class="panel"><h3>A PASS is a file</h3><p class="note" style="margin-top:6px"><code>verdict-check.sh</code> refuses a PASS that is for an older commit, skipped a gate, or claims a rung with no evidence file behind it. What it cannot check is whether the evidence is honest — so a person still reads it.</p></div>
+      <div class="panel"><h3>A PASS is a file</h3><p class="note" style="margin-top:6px"><code>verdict-check.sh</code> refuses a PASS that is for an older commit, skipped a gate, or claims a completed validation step without a matching evidence file. What it cannot check is whether the evidence is honest — so a person still reads it.</p></div>
     </div>
   </div>
 </section>
@@ -356,13 +356,13 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 </section>
 
 <!-- 5 ─────────────────────────────── -->
-<section class="slide" aria-label="The five rungs">
+<section class="slide" aria-label="Five QA validation steps">
   <div class="inner">
-    <div class="eyebrow">04 · The ladder — interactive</div>
-    <h2>Five rungs. Every claim carries its receipt.</h2>
-    <p class="lede">Select a rung to see what it actually produced in this run. Rungs 1 and 2 are mandatory; the charter decides the rest, and a skipped rung must give a reason.</p>
+    <div class="eyebrow">04 · QA validation — interactive</div>
+    <h2>Five validation steps. Every claim includes evidence.</h2>
+    <p class="lede">Choose a step to see the evidence it produced in this run. Steps 1 and 2 always run; the QA instructions decide which remaining steps apply. Every skipped step must explain why.</p>
     <div class="grid g2" style="align-items:start">
-      <div class="ladder" role="tablist" aria-label="Validation rungs" id="ladder"></div>
+      <div class="ladder" role="tablist" aria-label="QA validation steps" id="ladder"></div>
       <div class="panel" id="rungPanel" aria-live="polite"></div>
     </div>
   </div>
@@ -515,26 +515,26 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 
   /* ---------- rungs ---------- */
   var RUNGS = [
-    { n:1, name:'Static gates', status:'pass',
-      sub:'lint and types on the frozen checkout',
+    { n:1, name:'Code-quality checks', status:'pass',
+      sub:'lint and type checks on the exact commit',
       body:'<pre>$ pnpm turbo check\n Tasks:    70 successful, 70 total\n  Time:    20.129s\n\nEXIT_CODE=0</pre>'
         + '<p class="note" style="margin-top:10px">Also records <code>git rev-parse HEAD</code> and <code>git status --porcelain</code>, so the checker can confirm QA validated the exact commit dispatched and changed nothing.</p>' },
-    { n:2, name:'Unit and integration tests', status:'pass',
-      sub:'affected packages, and proof a suite really ran',
+    { n:2, name:'Automated tests', status:'pass',
+      sub:'unit and integration tests for the affected code',
       body:'<pre>web-app:test:  Test Files  532 passed (532)\nweb-app:test:       Tests  6184 passed (6184)</pre>'
         + '<p class="note" style="margin-top:10px">Lane A also ran a scan proving no assertion still expects the old text:</p>'
         + '<pre style="margin-top:8px">$ rg -n \'Hello, [^"]*!\' dashboard-greeting.test.tsx\n<span class="dim">(no output: no assertion expects "!" after the first name)</span></pre>' },
-    { n:3, name:'API calls and database state', status:'skipped',
-      sub:'skipped by charter — with a reason on record',
-      body:'<p class="note">Both charters skipped this rung: a punctuation change and an icon swap have no persistence path. A skipped rung must state why, and the reason is carried into the verdict rather than left blank.</p>'
+    { n:3, name:'API and database verification', status:'skipped',
+      sub:'not needed for these UI-only changes — reason recorded',
+      body:'<p class="note">Both QA instructions skipped this step: a punctuation change and an icon swap have no persistence path. A skipped step must explain why, and that reason is recorded in the verdict.</p>'
         + '<pre style="margin-top:10px">"status": "skipped",\n"reason": "presentational change,\n           no persistence path"</pre>' },
-    { n:4, name:'Browser verification', status:'pass',
-      sub:'a real Clerk session, not a bypass',
+    { n:4, name:'Real browser verification', status:'pass',
+      sub:'an authenticated session that behaves like a user',
       body:'<pre>"signedInDuringRun": true,\n"appSessionContainsExpectedSeededClerkUserId": true,\n"heading": "Hello, Andres. Welcome back."</pre>'
-        + '<p class="note" style="margin-top:10px">For lane B the same rung captured the rendered icon itself — one rounded <code>&lt;rect&gt;</code> and no <code>&lt;path&gt;</code> elements, which is how you prove a house became a square.</p>' },
-    { n:5, name:'Adversarial cases', status:'pass',
-      sub:'empty data, missing permissions, repeats',
-      body:'<p class="note">The charter asked for the dashboard with no loans and no tasks. Both lanes captured those states as screenshots rather than asserting them.</p>'
+        + '<p class="note" style="margin-top:10px">For lane B the same step captured the rendered icon itself — one rounded <code>&lt;rect&gt;</code> and no <code>&lt;path&gt;</code> elements, which is how you prove a house became a square.</p>' },
+    { n:5, name:'Edge cases and failure scenarios', status:'pass',
+      sub:'empty data, missing permissions and repeated actions',
+      body:'<p class="note">The QA instructions required checks of the dashboard with no loans and no tasks. Both lanes captured those states as screenshots rather than asserting them.</p>'
         + '<pre style="margin-top:10px">5-no-loans.png\n5-no-tasks.png\n5-no-tasks-for-loans.png\n5-evidence-audit.txt   <span class="dim">Codex auditing its own evidence</span></pre>' }
   ];
   var ladder = document.getElementById('ladder');
@@ -554,7 +554,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
       c.setAttribute('aria-selected', String(i===j));
     });
     var r = RUNGS[i];
-    rungPanel.innerHTML = '<h3>Rung ' + r.n + ' — ' + r.name + '</h3>'
+    rungPanel.innerHTML = '<h3>Step ' + r.n + ' — ' + r.name + '</h3>'
       + '<div style="margin-top:12px">' + r.body + '</div>';
   }
   pickRung(0);
@@ -574,7 +574,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
         shot:'data:image/png;base64,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',
         cap:'4-top-nav.png — the rendered navigation bar',
         code:'"class": "lucide lucide-square size-5",\n"rects": [{ "x":3, "y":3, "width":18, "height":18 }],\n"paths": []',
-        note:'This icon change had no targeted automated assertion. The browser rung supplied the missing visual proof — and "paths: []" confirms the two house outlines are gone.' }
+        note:'This icon change had no targeted automated assertion. The browser validation step supplied the missing visual proof — and "paths: []" confirms the two house outlines are gone.' }
   };
   function renderEv(k){
     var e = EV[k];
@@ -605,15 +605,15 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
   var TOTAL = 115; /* minutes from 02:04 */
   var A_EV = [
     {t:2,  label:'preparing'},      {t:39, label:'env ready'},
-    {t:41, label:'rung 1 ✓', pass:true}, {t:45, label:'rung 2 ✓', pass:true},
-    {t:52, label:'rung 4 ✓', pass:true}, {t:57, label:'rung 5 ✓', pass:true},
+    {t:41, label:'step 1 ✓', pass:true}, {t:45, label:'step 2 ✓', pass:true},
+    {t:52, label:'step 4 ✓', pass:true}, {t:57, label:'step 5 ✓', pass:true},
     {t:62, label:'PASS', pass:true}
   ];
   var B_EV = [
     {t:2,  label:'queued'},         {t:44, label:'building'},
-    {t:80, label:'env ready'},      {t:84, label:'rung 1 ✓', pass:true},
-    {t:88, label:'rung 2 ✓', pass:true}, {t:96, label:'rung 4 ✓', pass:true},
-    {t:102,label:'rung 5 ✓', pass:true}, {t:108,label:'PASS', pass:true}
+    {t:80, label:'env ready'},      {t:84, label:'step 1 ✓', pass:true},
+    {t:88, label:'step 2 ✓', pass:true}, {t:96, label:'step 4 ✓', pass:true},
+    {t:102,label:'step 5 ✓', pass:true}, {t:108,label:'PASS', pass:true}
   ];
   function mkEv(row, list){
     row.innerHTML = '';

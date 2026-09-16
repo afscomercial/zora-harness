@@ -5,7 +5,7 @@ monorepo.
 
 ![Parallel feature development in Zora Harness: features A, B and C each have an independent worktree, plan, implementation, gates and run state. Their pushed commits enter a shared QA queue. Two reusable isolated QA slots on the current VPS run Codex with private Docker, Kind and unchanged Tilt. Startup is serialized; ready environments validate concurrently. Each feature receives its own evidence, verdict and PR. The two-slot limit applies to QA, not development.](docs/zora-harness.png)
 
-Open the [interactive two-lane harness presentation](docs/harness-presentation.html) for an animated walkthrough of the flow, VPS isolation, validation ladder and evidence from two concurrent feature runs.
+Open the [interactive two-lane harness presentation](docs/harness-presentation.html) for an animated walkthrough of the flow, VPS isolation, five-step QA validation and evidence from two concurrent feature runs.
 
 ## Parallel development and QA
 
@@ -87,7 +87,7 @@ end, on this machine only.
 
 Validation runs as a remote job: the lead freezes and pushes a commit, writes a
 charter, and `run-codex-qa` sends an immutable attempt over SSH to a selected worker.
-Codex (`gpt-5.6-sol`) runs the validation ladder; the lead checks the downloaded
+Codex (`gpt-5.6-sol`) runs the five QA validation steps; the lead checks the downloaded
 verdict and evidence with `verdict-check.sh --remote` before making the final call.
 
 The replacement worker uses **protocol 5 with mandatory per-attempt sandboxes**.
@@ -114,7 +114,7 @@ validator fallback remains part of the lane workflow when remote QA is unavailab
 Explicit worker inventory supports additional VPSs; automatic balancing is not
 implemented. Two original commits ran concurrently with the selected six-service
 profile. Removing one environment left the other healthy, and a queued third attempt
-started only after a slot was released. The second run passed all five QA rungs,
+started only after a slot was released. The second run passed all five QA validation steps,
 local evidence verification and clean teardown.
 
 The first run's supplemental browser checks recorded two transient failures
@@ -147,7 +147,7 @@ implementer's reasoning, so the fresh-eyes rule holds by construction.
 **Why a PASS is a file.** The validator writes `verdict.json` and its evidence into
 the run folder, and `skills/zora-cycle/verdict-check.sh` refuses a PASS that is for
 an older commit, predates uncommitted changes, skipped the gates or tests, or claims
-a rung with no evidence file behind it. What it cannot check is whether the evidence
+a completed validation step without a matching evidence file. What it cannot check is whether the evidence
 is honest, so the lead still reads it.
 
 **Why runs live in `runs/`, gitignored.** Outside zora-pantheon, so nothing lands in that
