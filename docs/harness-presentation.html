@@ -274,7 +274,7 @@ img{max-width:100%; display:block}
 <!-- 1 ─────────────────────────────── -->
 <section class="slide" aria-label="Title">
   <div class="inner">
-    <div class="eyebrow">zora-harness · 15 September 2026</div>
+    <div class="eyebrow">zora-harness</div>
     <div class="hero">
       <div style="display:flex;flex-direction:column;gap:18px">
         <h1>Two lanes,<br>one night.</h1>
@@ -712,14 +712,14 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 
   /* Complete flow: illustrative walkthrough, separate from the recorded demo. */
   var FLOW = [
-    ['Request & plan','Your machine · Claude','You describe the feature. The lead creates a separate worktree and asks the planner to define the scope, approach and success criteria.','A feature plan and an independent workspace.'],
-    ['Approve the plan','You','You review the proposed behavior and approve the plan before implementation starts.','An agreed plan that guides development and QA.'],
-    ['Build the feature','Your machine · implementer','The implementation agent changes the code and adds tests in this feature’s worktree. The lead coordinates the work.','Code and tests for this feature.'],
-    ['Check & submit','Your machine · lead','The lead checks code quality, types and tests. Once they pass, it pushes the exact commit and sends QA instructions describing what to test and which services to start.','An immutable QA request tied to one commit.'],
-    ['Queue & prepare','VPS · Python worker','The worker assigns an available slot. It starts private Docker, a Kind Kubernetes cluster, Tilt and test data. A shared startup lock limits heavy builds to one at a time.','An isolated environment running the requested commit.'],
-    ['Run independent QA','VPS · Codex','Codex follows the validation steps, including applicable API, database and authenticated browser checks. It records results, logs and screenshots.','A PASS, FAIL or INCOMPLETE verdict with supporting evidence.'],
-    ['Return & check evidence','VPS worker → local lead','The supervisor checks cleanup before reusing the slot. The harness downloads the result; the local checker and lead inspect the commit identity, required checks and evidence.','A verified result for this feature. FAIL returns to a code fix; INCOMPLETE repairs QA and retries the same commit.'],
-    ['Review & deliver','Your machine · lead + reviewers','After accepted QA, the lead opens the feature’s pull request, handles review feedback and checks CI. Changes that need revalidation return through the checks.','A reviewed pull request with green CI. The harness stops here; merging is a separate decision.']
+    ['Request & plan','Agent · zora-planner','You describe the feature. The Claude lead creates a separate worktree, then zora-planner defines the scope, approach and success criteria.','A feature plan and an independent workspace.'],
+    ['Approve the plan','Owner · You','You review the proposed behavior and approve the plan before implementation starts.','An agreed plan that guides development and QA.'],
+    ['Build the feature','Agent · zora-implementer','zora-implementer changes the code and adds tests in this feature’s worktree. The Claude lead coordinates the work.','Code and tests for this feature.'],
+    ['Check & submit','Agent · Claude lead','The Claude lead checks code quality, types and tests. Once they pass, it pushes the exact commit and sends QA instructions describing what to test and which services to start.','An immutable QA request tied to one commit.'],
+    ['Queue & prepare','Service · VPS queue worker','The Python queue worker assigns an available slot. It starts private Docker, a Kind Kubernetes cluster, Tilt and test data. A shared startup lock limits heavy builds to one at a time.','An isolated environment running the requested commit.'],
+    ['Run independent QA','Agent · Codex QA','Codex follows the validation steps, including applicable API, database and authenticated browser checks. It records results, logs and screenshots.','A PASS, FAIL or INCOMPLETE verdict with supporting evidence.'],
+    ['Return & check evidence','Owners · VPS supervisor + Claude lead','The VPS supervisor checks cleanup before reusing the slot. The harness downloads the result; the local checker and Claude lead inspect the commit identity, required checks and evidence.','A verified result for this feature. FAIL returns to zora-implementer for a code fix; INCOMPLETE repairs QA and retries the same commit.'],
+    ['Review & deliver','Owners · Claude lead + reviewers','After accepted QA, the Claude lead opens the feature’s pull request, handles review feedback and checks CI with the reviewers. Changes that need revalidation return through the checks.','A reviewed pull request with green CI. The harness stops here; merging is a separate decision.']
   ];
   var flowIndex=0, flowTimer=null;
   var flowMap=document.getElementById('flowMap');
