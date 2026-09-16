@@ -214,11 +214,39 @@ img{max-width:100%; display:block}
 #evPanel .panel > div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}
 #evPanel .shot img{max-height:280px;object-fit:contain}
 
+/* ---------- VPS resources ---------- */
+.resource-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.resource-slide .lede{max-width:86ch}
+.resource-stat{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:12px 15px}
+.resource-stat b{display:block;font-family:var(--display);font-size:25px;line-height:1.05}
+.resource-stat span{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.resource-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;align-items:start}
+.resource-row{margin-top:13px}
+.resource-label{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:12.5px;margin-bottom:5px}
+.resource-label strong{color:var(--ink);font-family:var(--mono);font-weight:500}
+.meter{height:14px;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.meter-fill{display:block;height:100%;width:0;border-radius:999px;background:var(--lane-b);transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.slide.on .meter-fill{width:var(--w)}
+.meter-fill.a{background:var(--lane-a)}
+.meter-fill.pass{background:var(--pass)}
+.budget{display:flex;height:24px;margin-top:12px;border:1px solid var(--line);border-radius:6px;overflow:hidden;font:10px var(--mono);color:#10151C}
+.budget span{display:flex;align-items:center;justify-content:center;white-space:nowrap}
+.budget .s1{width:40.5%;background:var(--lane-a)}
+.budget .s2{width:40.5%;background:var(--lane-b)}
+.budget .host{width:15.6%;background:var(--pass)}
+.budget .spare{width:3.4%;background:var(--surface-2);color:var(--faint)}
+.resource-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:13px}
+.resource-fact{background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:9px 11px}
+.resource-fact b{display:block;font-family:var(--mono);font-size:16px;color:var(--ink)}
+.resource-fact span{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}
+
 @media (max-width:860px){
   .hero,.g2,.g3,.g4,.swap{grid-template-columns:1fr}
   .statrow{grid-template-columns:repeat(3,minmax(0,1fr))}
   .track{grid-template-columns:1fr; gap:6px}
   #evPanel .panel > div{grid-template-columns:1fr}
+  .resource-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .resource-grid{grid-template-columns:1fr}
 }
 @media (max-height:800px) and (min-width:861px){
   .slide{padding-top:28px;padding-bottom:72px}
@@ -230,6 +258,21 @@ img{max-width:100%; display:block}
   .kv{padding:5px 0}
   #evPanel .shot img{max-height:245px}
   #evPanel pre{padding:9px 12px;line-height:1.45}
+  .resource-slide .inner{gap:10px}
+  .resource-stats{gap:8px}
+  .resource-stat{padding:8px 12px}
+  .resource-stat b{font-size:21px}
+  .resource-stat span{margin-top:2px}
+  .resource-grid{gap:10px}
+  .resource-grid .panel{padding:11px 15px}
+  .resource-row{margin-top:7px}
+  .resource-label{font-size:11.5px;margin-bottom:3px}
+  .meter{height:11px}
+  .resource-facts{gap:6px;margin-top:8px}
+  .resource-fact{padding:6px 9px}
+  .resource-fact b{font-size:14px}
+  .resource-fact span{font-size:10.5px}
+  .resource-slide .note{font-size:11.5px;line-height:1.35}
 }
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important; transition-duration:.01ms!important}
@@ -440,30 +483,51 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
   </div>
 </section>
 
-<!-- 8 ─────────────────────────────── -->
-<section class="slide" aria-label="What it caught">
+<!-- 9 ─────────────────────────────── -->
+<section class="slide resource-slide" aria-label="VPS resource usage">
   <div class="inner">
-    <div class="eyebrow">07 · The honest part</div>
-    <h2>Four attempts failed before two passed</h2>
-    <p class="lede">The failures are the interesting part, because none of them were the code. Three were a charter that named too few services, and one was a browser waiting on the wrong signal.</p>
-    <div class="grid g2">
+    <div class="eyebrow">07 · VPS capacity</div>
+    <h2>Two parallel QA environments fit on one 8-vCPU, 32-GB VPS</h2>
+    <p class="lede">Measured during the scoped six-service, two-slot acceptance run. Across 290 host samples, memory and disk kept substantial headroom and the kernel reported no out-of-memory events.</p>
+    <div class="resource-stats">
+      <div class="resource-stat"><b>8</b><span>virtual CPUs</span></div>
+      <div class="resource-stat"><b>31.34 GiB</b><span>host memory · 32,094 MiB</span></div>
+      <div class="resource-stat"><b>387 GB</b><span>host disk capacity</span></div>
+      <div class="resource-stat"><b>2</b><span>isolated QA slots</span></div>
+    </div>
+    <div class="resource-grid">
       <div class="panel">
-        <h3 style="color:var(--fail)">What went wrong</h3>
-        <dl class="kv" style="margin-top:10px"><dt>Attempt 1 &amp; 2</dt><dd>task-app ENOTFOUND sns-sqs</dd></dl>
-        <dl class="kv"><dt>Attempt 3</dt><dd>dashboard hung 360s</dd></dl>
-        <dl class="kv"><dt>Lane B browser</dt><dd>networkidle timeout, retried</dd></dl>
-        <p class="note" style="margin-top:12px"><code>task-service</code> exits without localstack; the dashboard blocks without <code>insurance-provider</code>. Both were missing from the charter's service list — an operator error the environment surfaced loudly rather than hiding.</p>
+        <h3>Measured usage during the two-slot run</h3>
+        <div class="resource-row">
+          <div class="resource-label"><span>Host memory still available at the busiest sample</span><strong>21.87 / 31.34 GiB · 70%</strong></div>
+          <div class="meter"><span class="meter-fill pass" style="--w:69.8%"></span></div>
+        </div>
+        <div class="resource-row">
+          <div class="resource-label"><span>Lane A process peak</span><strong>4.83 GiB / 8,000 MiB cap · 62%</strong></div>
+          <div class="meter"><span class="meter-fill a" style="--w:61.8%"></span></div>
+        </div>
+        <div class="resource-row">
+          <div class="resource-label"><span>Lane B process peak</span><strong>4.28 GiB / 8,000 MiB cap · 55%</strong></div>
+          <div class="meter"><span class="meter-fill" style="--w:54.8%"></span></div>
+        </div>
+        <p class="note" style="margin-top:11px">The lane peaks cover their runner and browser processes. Host sampling also captures Docker, BuildKit, Kind and the operating system.</p>
       </div>
       <div class="panel">
-        <h3 style="color:var(--pass)">What the harness got right</h3>
-        <p class="note" style="margin-top:6px">Bootstrap failures returned <code>INCOMPLETE</code> before Codex ran; later browser timeouts stayed separate from product defects. The checker refused incomplete evidence, while the neighboring lane kept running.</p>
-        <p class="note" style="margin-top:10px">Two agents also found the same real bug independently: <code>turbo test:agentic</code> is undefined for <code>web-app</code>, so the gate reported success having run zero tests. It is fixed, and Codex had already been defending against it.</p>
+        <h3>Capacity reserved before work starts</h3>
+        <div class="budget" aria-label="31,000 MiB reserved from 32,094 MiB: 13,000 for slot 1, 13,000 for slot 2, and 5,000 for the host">
+          <span class="s1">slot 1</span><span class="s2">slot 2</span><span class="host">host</span><span class="spare"></span>
+        </div>
+        <p class="note" style="margin-top:7px">Admission reserves 13,000 MiB per slot plus 5,000 MiB for the host. These are safety budgets, not measured consumption.</p>
+        <div class="resource-facts">
+          <div class="resource-fact"><b>274.4 GiB</b><span>minimum free disk observed</span></div>
+          <div class="resource-fact"><b>0 OOM</b><span>out-of-memory events</span></div>
+          <div class="resource-fact"><b>37m / 25m</b><span>cold bootstrap: A / B</span></div>
+          <div class="resource-fact"><b>20 GB × 2</b><span>BuildKit cache target</span></div>
+        </div>
+        <p class="note" style="margin-top:10px">Storage I/O was the bottleneck. Bootstrap runs one slot at a time to control that peak; once ready, both Codex validations overlap.</p>
       </div>
     </div>
-    <div class="panel">
-      <h3>Still true, and worth saying out loud</h3>
-      <p class="note" style="margin-top:6px">Most of this harness is prose, and prose does not execute. What is genuinely enforced: the planner's tool allowlist, the repo's TDD hooks, and <code>verdict-check.sh</code>. Everything else holds because the model chooses to follow it — and that failure would be silent. So the last step is never the script. It is a person reading the evidence.</p>
-    </div>
+    <p class="note">Capacity conclusion applies to this six-service profile. Larger service combinations and repeated cold builds still need measurement before adding more slots.</p>
   </div>
 </section>
 
