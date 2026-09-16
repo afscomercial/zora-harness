@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Two Lanes, One Night</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#10151C; --surface:#171E27; --surface-2:#1E2733;
+  --line:#242D3A; --line-strong:#33404F;
+  --ink:#E8EEF5; --muted:#8494A6; --faint:#5E6E80;
+  --lane-a:#F0A93B; --lane-b:#45B7C4;
+  --pass:#56C271; --fail:#E5604D; --warn:#E3A93B;
+  --display:'Archivo',system-ui,sans-serif;
+  --body:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+:root:not([data-theme="dark"]){
+  --ground:#F5F7FA; --surface:#FFFFFF; --surface-2:#EEF2F6;
+  --line:#DCE3EB; --line-strong:#C3CEDA;
+  --ink:#141B24; --muted:#5A6878; --faint:#7C8A9A;
+  --lane-a:#B4741A; --lane-b:#1B7C89;
+  --pass:#2B8A4B; --fail:#C0392B; --warn:#96690F;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#10151C; --surface:#171E27; --surface-2:#1E2733;
+    --line:#242D3A; --line-strong:#33404F;
+    --ink:#E8EEF5; --muted:#8494A6; --faint:#5E6E80;
+    --lane-a:#F0A93B; --lane-b:#45B7C4;
+    --pass:#56C271; --fail:#E5604D; --warn:#E3A93B;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#10151C; --surface:#171E27; --surface-2:#1E2733;
+  --line:#242D3A; --line-strong:#33404F;
+  --ink:#E8EEF5; --muted:#8494A6; --faint:#5E6E80;
+  --lane-a:#F0A93B; --lane-b:#45B7C4;
+  --pass:#56C271; --fail:#E5604D; --warn:#E3A93B;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--body); font-size:16px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{font-family:var(--display); font-weight:800; letter-spacing:-.022em; text-wrap:balance; margin:0}
+code,.mono{font-family:var(--mono)}
+
+/* ---------- deck shell ---------- */
+.deck{height:100%; overflow:hidden; position:relative}
+.slide{
+  position:absolute; inset:0; overflow-y:auto; overflow-x:hidden;
+  padding:clamp(20px,4vw,56px) clamp(16px,5vw,72px) 92px;
+  opacity:0; visibility:hidden; transform:translateY(10px);
+  transition:opacity .3s ease, transform .3s ease, visibility .3s;
+}
+.slide.on{opacity:1; visibility:visible; transform:none}
+.inner{max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:clamp(16px,2.4vw,28px)}
+
+.eyebrow{
+  font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--faint); display:flex; align-items:center; gap:10px;
+}
+.eyebrow::after{content:""; flex:1; height:1px; background:var(--line)}
+h1{font-size:clamp(30px,5.4vw,62px); line-height:1.02}
+h2{font-size:clamp(23px,3.4vw,38px); line-height:1.08}
+h3{font-size:clamp(15px,1.7vw,19px); font-weight:700; letter-spacing:-.01em}
+.lede{font-size:clamp(15px,1.8vw,19px); color:var(--muted); max-width:62ch}
+p{margin:0}
+.note{font-size:13px; color:var(--faint); max-width:70ch}
+
+/* ---------- nav ---------- */
+.rail{
+  position:fixed; left:0; right:0; bottom:0; z-index:40;
+  display:flex; align-items:center; gap:14px;
+  padding:12px clamp(16px,5vw,72px);
+  padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  background:color-mix(in srgb, var(--ground) 92%, transparent);
+  border-top:1px solid var(--line); backdrop-filter:blur(8px);
+}
+.dots{display:flex; gap:7px; flex:1; flex-wrap:wrap}
+.dot{
+  width:9px; height:9px; border-radius:50%; border:1px solid var(--line-strong);
+  background:transparent; padding:0; cursor:pointer; transition:background .2s, transform .2s;
+}
+.dot[aria-current="true"]{background:var(--ink); border-color:var(--ink); transform:scale(1.25)}
+.dot:focus-visible,.nav button:focus-visible,.tab:focus-visible,.rung:focus-visible,.ctrl:focus-visible{
+  outline:2px solid var(--lane-b); outline-offset:3px
+}
+.nav{display:flex; gap:8px; align-items:center}
+.nav button{
+  width:34px; height:34px; border-radius:8px; cursor:pointer;
+  border:1px solid var(--line-strong); background:var(--surface); color:var(--ink);
+  font-size:15px; line-height:1;
+}
+.nav button:disabled{opacity:.32; cursor:default}
+.count{font-family:var(--mono); font-size:12px; color:var(--faint); min-width:44px; text-align:right}
+
+/* ---------- generic pieces ---------- */
+.grid{display:grid; gap:clamp(12px,1.6vw,20px)}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:clamp(14px,1.8vw,22px)}
+.kv{display:flex; justify-content:space-between; gap:14px; padding:7px 0; border-bottom:1px solid var(--line); font-size:14px}
+.kv:last-child{border-bottom:0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0; font-family:var(--mono); font-size:12.5px; text-align:right; word-break:break-all}
+.tag{
+  display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
+  font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  padding:3px 9px; border-radius:999px; border:1px solid currentColor;
+}
+.t-pass{color:var(--pass)} .t-fail{color:var(--fail)} .t-warn{color:var(--warn)}
+.t-a{color:var(--lane-a)} .t-b{color:var(--lane-b)}
+.laneline{border-left:3px solid var(--line-strong); padding-left:14px}
+.laneline.a{border-color:var(--lane-a)}
+.laneline.b{border-color:var(--lane-b)}
+pre{
+  margin:0; background:var(--surface-2); border:1px solid var(--line); border-radius:8px;
+  padding:12px 14px; overflow-x:auto; font-family:var(--mono); font-size:12.5px; line-height:1.65; color:var(--ink);
+}
+.dim{color:var(--faint)}
+.ok{color:var(--pass)}
+.bad{color:var(--fail)}
+img{max-width:100%; display:block}
+
+/* ---------- title slide ---------- */
+.hero{display:grid; grid-template-columns:1.25fr .85fr; gap:clamp(20px,3vw,44px); align-items:center}
+.stat{display:flex; flex-direction:column; gap:2px}
+.stat b{font-family:var(--display); font-size:clamp(26px,3.6vw,40px); font-weight:800; letter-spacing:-.03em; line-height:1}
+.stat span{font-size:12px; color:var(--muted)}
+.statrow{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; padding-top:6px}
+
+/* ---------- pipeline ---------- */
+.pipe{display:flex; align-items:stretch; gap:8px; flex-wrap:wrap}
+.step{
+  flex:1 1 130px; background:var(--surface); border:1px solid var(--line);
+  border-top:3px solid var(--line-strong); border-radius:8px; padding:12px 13px;
+  opacity:.45; transition:opacity .45s ease, border-color .45s ease, transform .45s ease;
+}
+.step.lit{opacity:1; border-top-color:var(--lane-b); transform:translateY(-3px)}
+.step b{display:block; font-family:var(--display); font-size:14px; font-weight:700; margin-bottom:4px}
+.step span{font-size:12.5px; color:var(--muted); line-height:1.45}
+
+/* ---------- rung ladder ---------- */
+.ladder{display:flex; flex-direction:column; gap:7px}
+.rung{
+  display:grid; grid-template-columns:30px 1fr auto; gap:12px; align-items:center;
+  width:100%; text-align:left; cursor:pointer; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:11px 13px;
+  font-family:var(--body); font-size:14px; transition:border-color .2s, background .2s;
+}
+.rung:hover{border-color:var(--line-strong)}
+.rung[aria-selected="true"]{border-color:var(--lane-b); background:var(--surface-2)}
+.rung i{font-family:var(--mono); font-style:normal; color:var(--faint); font-size:13px}
+.rung em{font-style:normal; color:var(--muted); font-size:12.5px; display:block}
+
+/* ---------- lane tabs ---------- */
+.tabs{display:flex; gap:8px; flex-wrap:wrap}
+.tab{
+  cursor:pointer; font-family:var(--mono); font-size:12px; letter-spacing:.05em;
+  padding:8px 14px; border-radius:999px; border:1px solid var(--line-strong);
+  background:transparent; color:var(--muted);
+}
+.tab[aria-selected="true"]{color:var(--ground); background:var(--ink); border-color:var(--ink)}
+.tab.a[aria-selected="true"]{background:var(--lane-a); border-color:var(--lane-a); color:#10151C}
+.tab.b[aria-selected="true"]{background:var(--lane-b); border-color:var(--lane-b); color:#10151C}
+
+/* ---------- replay ---------- */
+.replay{display:flex; flex-direction:column; gap:14px}
+.ctrls{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+.ctrl{
+  cursor:pointer; font-family:var(--body); font-weight:600; font-size:14px;
+  padding:9px 18px; border-radius:8px; border:1px solid var(--line-strong);
+  background:var(--ink); color:var(--ground);
+}
+.ctrl.ghost{background:transparent; color:var(--ink)}
+.clock{font-family:var(--mono); font-size:13px; color:var(--muted)}
+.track{display:grid; grid-template-columns:76px 1fr; gap:12px; align-items:center}
+.track b{font-family:var(--mono); font-size:11px; letter-spacing:.06em; text-transform:uppercase}
+.bar{position:relative; height:34px; background:var(--surface-2); border:1px solid var(--line); border-radius:6px; overflow:hidden}
+.fill{position:absolute; inset:0 auto 0 0; width:0; opacity:.3; transition:width .12s linear}
+.fill.a{background:var(--lane-a)} .fill.b{background:var(--lane-b)}
+.phase{
+  position:absolute; top:50%; transform:translate(-50%,-50%); font-family:var(--mono); font-size:11px;
+  font-weight:500; white-space:nowrap; color:var(--ink); background:var(--ground);
+  border:1px solid var(--line-strong); box-shadow:0 1px 6px rgba(0,0,0,.35);
+  border-radius:999px; padding:3px 10px; opacity:0; transition:opacity .3s;
+}
+.phase.show{opacity:1}
+.evrow{display:flex; gap:6px; flex-wrap:wrap; min-height:26px}
+.ev{
+  font-family:var(--mono); font-size:10.5px; padding:3px 8px; border-radius:5px;
+  border:1px dashed var(--line); color:var(--faint); background:transparent;
+  opacity:.5; transition:opacity .3s, color .3s, background .3s, border-color .3s;
+}
+.ev.in{opacity:1; color:var(--ink); background:var(--surface); border-style:solid; border-color:var(--line-strong)}
+.ev.in.pass{color:var(--pass); border-color:color-mix(in srgb,var(--pass) 50%,transparent)}
+
+/* ---------- evidence ---------- */
+.shot{border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface-2)}
+.shot img{width:100%}
+.cap{font-family:var(--mono); font-size:11px; color:var(--faint); padding:8px 10px; border-top:1px solid var(--line)}
+.swap{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start}
+.iconbox{
+  display:flex; align-items:center; justify-content:center; gap:14px;
+  background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:18px;
+}
+.iconbox svg{width:34px; height:34px; stroke-width:2; fill:none; stroke:currentColor}
+
+@media (max-width:860px){
+  .hero,.g2,.g3,.g4,.swap{grid-template-columns:1fr}
+  .statrow{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .track{grid-template-columns:1fr; gap:6px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important; transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+
+<main class="deck" id="deck">
+
+<!-- 1 ─────────────────────────────── -->
+<section class="slide on" aria-label="Title">
+  <div class="inner">
+    <div class="eyebrow">zora-harness · 15 September 2026</div>
+    <div class="hero">
+      <div style="display:flex;flex-direction:column;gap:18px">
+        <h1>Two lanes,<br>one night.</h1>
+        <p class="lede">An agent harness that builds two features at once and refuses to call either one done without evidence. This is the record of a real run — two features, two isolated environments, two verdicts.</p>
+        <div class="statrow">
+          <div class="stat"><b>2</b><span>features built in parallel</span></div>
+          <div class="stat"><b>75</b><span>evidence files collected</span></div>
+          <div class="stat"><b style="color:var(--pass)">0</b><span>findings</span></div>
+        </div>
+      </div>
+      <div class="panel" style="display:flex;flex-direction:column;gap:14px">
+        <div class="laneline a">
+          <div class="tag t-a">Lane A</div>
+          <h3 style="margin:7px 0 3px">Greeting punctuation</h3>
+          <p class="note"><code>Hello, {name}!</code> → <code>Hello, {name}.</code></p>
+          <p class="note mono" style="margin-top:6px">9e8eb3807 · slot 1 · <span class="ok">PASS</span></p>
+        </div>
+        <div class="laneline b">
+          <div class="tag t-b">Lane B</div>
+          <h3 style="margin:7px 0 3px">Square nav icon</h3>
+          <p class="note">House icon → plain square, top-left nav</p>
+          <p class="note mono" style="margin-top:6px">47866848b · slot 2 · <span class="ok">PASS</span></p>
+        </div>
+      </div>
+    </div>
+    <p class="note">Use ← → or the controls below. Slides 5–7 are interactive.</p>
+  </div>
+</section>
+
+<!-- 2 ─────────────────────────────── -->
+<section class="slide" aria-label="The cycle">
+  <div class="inner">
+    <div class="eyebrow">01 · The cycle</div>
+    <h2>One lead, three specialists, and a rule about evidence</h2>
+    <p class="lede">Your interactive session is the lead. Every result returns to it — agents never hand off to each other, because that is what strips an author's reasoning out before anyone checks their work.</p>
+    <div class="pipe" id="pipe">
+      <div class="step"><b>Plan</b><span>Read-only agent. No Bash, no Write — enforced by a tool allowlist, not by asking.</span></div>
+      <div class="step"><b>Approve</b><span>You read the plan. Last checkpoint before autonomous execution.</span></div>
+      <div class="step"><b>Implement</b><span>Test-first, inside one lane worktree. Never touches a sibling lane.</span></div>
+      <div class="step"><b>Gates</b><span>The lead re-runs lint, types and tests itself. Self-reports are not evidence.</span></div>
+      <div class="step"><b>Validate</b><span>Remote QA on a disposable VPS environment. Fresh context, different vendor.</span></div>
+      <div class="step"><b>Judge</b><span>A script checks the verdict. Then a human reads the evidence.</span></div>
+    </div>
+    <div class="grid g3">
+      <div class="panel"><h3>Fresh context is the mechanism</h3><p class="note" style="margin-top:6px">The validator receives the spec and the diff — never the implementer's reasoning. An agent that talks itself into a shortcut while building will carry the same reasoning into checking its own work.</p></div>
+      <div class="panel"><h3>A different model, deliberately</h3><p class="note" style="margin-top:6px">The implementer runs on Opus. QA runs on OpenAI's <code>gpt-5.6-sol</code> through Codex. A reviewer sharing the author's model shares the author's blind spots.</p></div>
+      <div class="panel"><h3>A PASS is a file</h3><p class="note" style="margin-top:6px"><code>verdict-check.sh</code> refuses a PASS that is for an older commit, skipped a gate, or claims a rung with no evidence file behind it. What it cannot check is whether the evidence is honest — so a person still reads it.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 ─────────────────────────────── -->
+<section class="slide" aria-label="Why lanes">
+  <div class="inner">
+    <div class="eyebrow">02 · Isolation</div>
+    <h2>Two features, two working trees, zero collisions</h2>
+    <p class="lede">Each feature gets its own git worktree, its own branch, its own checkout. Two implementer agents wrote code at the same time and neither could see the other's files. The proof is not a diagram — it is two screenshots taken from two environments.</p>
+    <div class="swap">
+      <div>
+        <div class="shot">
+          <img src="assets/lane-a-dashboard.png" alt="Lane A dashboard: the greeting reads Hello, Andres. with a period, and the first navigation icon is still a house.">
+          <div class="cap">lane A · 4-dashboard-greeting.png — period ✓ · house icon unchanged</div>
+        </div>
+      </div>
+      <div>
+        <div class="shot">
+          <img src="assets/lane-b-top-nav.png" alt="Lane B top navigation bar: the first icon is a square outline instead of a house.">
+          <div class="cap">lane B · 4-top-nav.png — square icon ✓</div>
+        </div>
+        <div class="panel" style="margin-top:14px">
+          <h3>Read those two images together</h3>
+          <p class="note" style="margin-top:6px">Lane A shows the new punctuation <em>and the old house icon</em>. Lane B shows the new square. Same moment, same machine, two environments that could not contaminate each other. That is the whole argument for lanes, captured by accident.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 ─────────────────────────────── -->
+<section class="slide" aria-label="QA on the VPS">
+  <div class="inner">
+    <div class="eyebrow">03 · The VPS</div>
+    <h2>Why QA lives on a machine that holds nothing valuable</h2>
+    <p class="lede">Codex needs Docker, Kubernetes, a browser and the network to test anything for real. An agent with that much access belongs somewhere disposable — and somewhere that has never seen the implementer's reasoning, so the fresh-eyes rule holds by construction.</p>
+    <div class="grid g2">
+      <div class="panel">
+        <h3>What one attempt owns</h3>
+        <dl class="kv" style="margin:10px 0 0"><dt>Execution isolation</dt><dd>sandbox · protocol 5</dd></dl>
+        <dl class="kv"><dt>Namespaces</dt><dd>mount · net · pid · uts · ipc</dd></dl>
+        <dl class="kv"><dt>Docker</dt><dd>private daemon + storage</dd></dl>
+        <dl class="kv"><dt>Cluster</dt><dd>own Kind cluster + database</dd></dl>
+        <dl class="kv"><dt>Filesystem</dt><dd>private tmpfs /tmp, HOME, tool state</dd></dl>
+        <p class="note" style="margin-top:12px">Because each attempt runs its own Docker daemon, one job pruning images cannot delete another job's. That is what made the Pantheon repo untouchable: no staging prerequisite, no Tiltfile change, nothing added to the product repo at all.</p>
+      </div>
+      <div class="panel">
+        <h3>Two slots, one build lock</h3>
+        <p class="note" style="margin-top:6px">The worker holds two slots. Bootstrap is serialized through a single lock so two cold image builds never collide; once an environment is ready the lock is released and validation overlaps.</p>
+        <pre style="margin-top:12px">slot 1  3a4282e5   <span class="dim">lane A</span>
+slot 2  62aa0c3d   <span class="dim">lane B</span>
+
+02:05:43  A  preparing        <span class="dim">holds lock</span>
+02:06:22  B  preparing        <span class="dim">queued</span>
+02:43:25  A  <span class="ok">environment ready</span>  <span class="dim">lock released</span>
+02:48     B  building         <span class="dim">holds lock</span>
+03:24:32  B  <span class="ok">environment ready</span></pre>
+        <p class="note" style="margin-top:12px">Cleanup releases the slot. A failed cleanup quarantines it instead, and a systemd reaper recovers interrupted attempts without touching the neighbouring environment.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 ─────────────────────────────── -->
+<section class="slide" aria-label="The five rungs">
+  <div class="inner">
+    <div class="eyebrow">04 · The ladder — interactive</div>
+    <h2>Five rungs. Every claim carries its receipt.</h2>
+    <p class="lede">Select a rung to see what it actually produced in this run. Rungs 1 and 2 are mandatory; the charter decides the rest, and a skipped rung must give a reason.</p>
+    <div class="grid g2" style="align-items:start">
+      <div class="ladder" role="tablist" aria-label="Validation rungs" id="ladder"></div>
+      <div class="panel" id="rungPanel" aria-live="polite"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 ─────────────────────────────── -->
+<section class="slide" aria-label="Replay of the run">
+  <div class="inner">
+    <div class="eyebrow">05 · Replay — interactive</div>
+    <h2>The run, as it actually happened</h2>
+    <p class="lede">Real timestamps from 15 September 2026. Press play and watch both lanes move: A takes the build lock, B waits, then both validate.</p>
+    <div class="replay">
+      <div class="ctrls">
+        <button class="ctrl" id="playBtn">▶ Play the run</button>
+        <button class="ctrl ghost" id="resetBtn">Reset</button>
+        <span class="clock" id="clock">02:04 — dispatch</span>
+      </div>
+      <div class="track">
+        <b class="t-a">Lane A</b>
+        <div class="bar"><div class="fill a" id="fillA"></div><div class="phase" id="phaseA">queued</div></div>
+      </div>
+      <div class="evrow" id="evA"></div>
+      <div class="track">
+        <b class="t-b">Lane B</b>
+        <div class="bar"><div class="fill b" id="fillB"></div><div class="phase" id="phaseB">queued</div></div>
+      </div>
+      <div class="evrow" id="evB"></div>
+      <p class="note">Bootstrap was ~38 minutes per lane — every attempt was a cold image build, because a sandbox's Docker cache dies with it. A per-slot cache has since been enabled; it had not yet paid off when this run executed.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 7 ─────────────────────────────── -->
+<section class="slide" aria-label="Evidence">
+  <div class="inner">
+    <div class="eyebrow">06 · Evidence — interactive</div>
+    <h2>What "verified" means here</h2>
+    <p class="lede">Switch lanes to see the real artifacts. Neither feature was accepted on a test result alone — both were driven in a real authenticated browser.</p>
+    <div class="tabs" role="tablist" aria-label="Lane">
+      <button class="tab a" id="tabA" role="tab" aria-selected="true" aria-controls="evPanel">Lane A · greeting</button>
+      <button class="tab b" id="tabB" role="tab" aria-selected="false" aria-controls="evPanel">Lane B · square icon</button>
+    </div>
+    <div id="evPanel" role="tabpanel" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- 8 ─────────────────────────────── -->
+<section class="slide" aria-label="What it caught">
+  <div class="inner">
+    <div class="eyebrow">07 · The honest part</div>
+    <h2>Four attempts failed before two passed</h2>
+    <p class="lede">The failures are the interesting part, because none of them were the code. Three were a charter that named too few services, and one was a browser waiting on the wrong signal.</p>
+    <div class="grid g2">
+      <div class="panel">
+        <h3 style="color:var(--fail)">What went wrong</h3>
+        <dl class="kv" style="margin-top:10px"><dt>Attempt 1 &amp; 2</dt><dd>task-app ENOTFOUND sns-sqs</dd></dl>
+        <dl class="kv"><dt>Attempt 3</dt><dd>dashboard hung 360s</dd></dl>
+        <dl class="kv"><dt>Lane B browser</dt><dd>networkidle timeout, retried</dd></dl>
+        <p class="note" style="margin-top:12px"><code>task-service</code> exits without localstack; the dashboard blocks without <code>insurance-provider</code>. Both were missing from the charter's service list — an operator error the environment surfaced loudly rather than hiding.</p>
+      </div>
+      <div class="panel">
+        <h3 style="color:var(--pass)">What the harness got right</h3>
+        <p class="note" style="margin-top:6px">Every failure came back as <code>INCOMPLETE</code> with <code>codex.ran = false</code> — never as a defect blamed on the code. The checker refused each one. When lane A's environment collapsed, lane B kept running and A's slot released cleanly.</p>
+        <p class="note" style="margin-top:10px">Two agents also found the same real bug independently: <code>turbo test:agentic</code> is undefined for <code>web-app</code>, so the gate reported success having run zero tests. It is fixed, and Codex had already been defending against it.</p>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Still true, and worth saying out loud</h3>
+      <p class="note" style="margin-top:6px">Most of this harness is prose, and prose does not execute. What is genuinely enforced: the planner's tool allowlist, the repo's TDD hooks, and <code>verdict-check.sh</code>. Everything else holds because the model chooses to follow it — and that failure would be silent. So the last step is never the script. It is a person reading the evidence.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div class="rail">
+  <div class="dots" id="dots" role="tablist" aria-label="Slides"></div>
+  <div class="nav">
+    <button id="prev" aria-label="Previous slide">←</button>
+    <button id="next" aria-label="Next slide">→</button>
+    <span class="count" id="count">1 / 8</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var dots = document.getElementById('dots');
+  var idx = 0;
+
+  slides.forEach(function(s,i){
+    var b = document.createElement('button');
+    b.className = 'dot'; b.type = 'button';
+    b.setAttribute('role','tab');
+    b.setAttribute('aria-label','Slide ' + (i+1));
+    b.addEventListener('click', function(){ go(i); });
+    dots.appendChild(b);
+  });
+  var dotEls = Array.prototype.slice.call(dots.children);
+
+  function go(n){
+    idx = Math.max(0, Math.min(slides.length-1, n));
+    slides.forEach(function(s,i){
+      s.classList.toggle('on', i===idx);
+      s.setAttribute('aria-hidden', String(i!==idx));
+    });
+    dotEls.forEach(function(d,i){ d.setAttribute('aria-current', String(i===idx)); });
+    document.getElementById('count').textContent = (idx+1) + ' / ' + slides.length;
+    document.getElementById('prev').disabled = idx===0;
+    document.getElementById('next').disabled = idx===slides.length-1;
+    if (idx===1) animatePipe();
+  }
+  document.getElementById('prev').addEventListener('click', function(){ go(idx-1); });
+  document.getElementById('next').addEventListener('click', function(){ go(idx+1); });
+  document.addEventListener('keydown', function(e){
+    var t = e.target && e.target.tagName;
+    if (t==='INPUT'||t==='TEXTAREA') return;
+    if (e.key==='ArrowRight'||e.key==='PageDown'){ e.preventDefault(); go(idx+1); }
+    if (e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); go(idx-1); }
+    if (e.key==='Home') go(0);
+    if (e.key==='End') go(slides.length-1);
+  });
+
+  /* pipeline */
+  var pipeDone = false;
+  function animatePipe(){
+    if (pipeDone) return; pipeDone = true;
+    var steps = document.querySelectorAll('#pipe .step');
+    steps.forEach(function(s,i){ setTimeout(function(){ s.classList.add('lit'); }, 90*i); });
+  }
+
+  /* ---------- rungs ---------- */
+  var RUNGS = [
+    { n:1, name:'Static gates', status:'pass',
+      sub:'lint and types on the frozen checkout',
+      body:'<pre>$ pnpm turbo check\n Tasks:    70 successful, 70 total\n  Time:    20.129s\n\nEXIT_CODE=0</pre>'
+        + '<p class="note" style="margin-top:10px">Also records <code>git rev-parse HEAD</code> and <code>git status --porcelain</code>, so the checker can confirm QA validated the exact commit dispatched and changed nothing.</p>' },
+    { n:2, name:'Unit and integration tests', status:'pass',
+      sub:'affected packages, and proof a suite really ran',
+      body:'<pre>web-app:test:  Test Files  532 passed (532)\nweb-app:test:       Tests  6184 passed (6184)</pre>'
+        + '<p class="note" style="margin-top:10px">Lane A also ran a scan proving no assertion still expects the old text:</p>'
+        + '<pre style="margin-top:8px">$ rg -n \'Hello, [^"]*!\' dashboard-greeting.test.tsx\n<span class="dim">(no output: no assertion expects "!" after the first name)</span></pre>' },
+    { n:3, name:'API calls and database state', status:'skipped',
+      sub:'skipped by charter — with a reason on record',
+      body:'<p class="note">Both charters skipped this rung: a punctuation change and an icon swap have no persistence path. A skipped rung must state why, and the reason is carried into the verdict rather than left blank.</p>'
+        + '<pre style="margin-top:10px">"status": "skipped",\n"reason": "presentational change,\n           no persistence path"</pre>' },
+    { n:4, name:'Browser verification', status:'pass',
+      sub:'a real Clerk session, not a bypass',
+      body:'<pre>"signedInDuringRun": true,\n"appSessionContainsExpectedSeededClerkUserId": true,\n"heading": "Hello, Andres. Welcome back."</pre>'
+        + '<p class="note" style="margin-top:10px">For lane B the same rung captured the rendered icon itself — one rounded <code>&lt;rect&gt;</code> and no <code>&lt;path&gt;</code> elements, which is how you prove a house became a square.</p>' },
+    { n:5, name:'Adversarial cases', status:'pass',
+      sub:'empty data, missing permissions, repeats',
+      body:'<p class="note">The charter asked for the dashboard with no loans and no tasks. Both lanes captured those states as screenshots rather than asserting them.</p>'
+        + '<pre style="margin-top:10px">5-no-loans.png\n5-no-tasks.png\n5-no-tasks-for-loans.png\n5-evidence-audit.txt   <span class="dim">Codex auditing its own evidence</span></pre>' }
+  ];
+  var ladder = document.getElementById('ladder');
+  var rungPanel = document.getElementById('rungPanel');
+  RUNGS.forEach(function(r,i){
+    var b = document.createElement('button');
+    b.className = 'rung'; b.type = 'button'; b.setAttribute('role','tab');
+    b.setAttribute('aria-selected', String(i===0));
+    var cls = r.status==='pass' ? 't-pass' : 't-warn';
+    b.innerHTML = '<i>' + r.n + '</i><span><strong>' + r.name + '</strong><em>' + r.sub + '</em></span>'
+                + '<span class="tag ' + cls + '">' + r.status + '</span>';
+    b.addEventListener('click', function(){ pickRung(i); });
+    ladder.appendChild(b);
+  });
+  function pickRung(i){
+    Array.prototype.forEach.call(ladder.children, function(c,j){
+      c.setAttribute('aria-selected', String(i===j));
+    });
+    var r = RUNGS[i];
+    rungPanel.innerHTML = '<h3>Rung ' + r.n + ' — ' + r.name + '</h3>'
+      + '<div style="margin-top:12px">' + r.body + '</div>';
+  }
+  pickRung(0);
+
+  /* ---------- evidence tabs ---------- */
+  var EV = {
+    a:{ title:'Lane A — greeting punctuation',
+        rows:[['Attempt','3a4282e5-98a4-46d9-8414-8a6afd5f605e'],['Commit','9e8eb3807'],['Slot','1'],
+              ['Verdict','PASS · 0 findings'],['verdict-check','exit 0'],['Evidence','33 files']],
+        shot:'assets/lane-a-dashboard.png',
+        cap:'4-dashboard-greeting.png — live session, period after the name',
+        code:'"periodAfterFirstName": true,\n"noExclamationAfterFirstName": true,\n"loanSummaryPresent": true',
+        note:'The verdict still declares what it did not check: the populated-loan dashboard was never browser-tested, because the seeded QA identity has zero loans.' },
+    b:{ title:'Lane B — square nav icon',
+        rows:[['Attempt','62aa0c3d-3929-4734-b8b1-2bd7252c568d'],['Commit','47866848b'],['Slot','2'],
+              ['Verdict','PASS · 0 findings'],['verdict-check','exit 0'],['Evidence','42 files']],
+        shot:'assets/lane-b-top-nav.png',
+        cap:'4-top-nav.png — the rendered navigation bar',
+        code:'"class": "lucide lucide-square size-5",\n"rects": [{ "x":3, "y":3, "width":18, "height":18 }],\n"paths": []',
+        note:'This change had no test coverage at all. The browser rung was the only thing that could prove it — and "paths: []" is the proof the two house outlines are gone.' }
+  };
+  function renderEv(k){
+    var e = EV[k];
+    var rows = e.rows.map(function(r){
+      return '<dl class="kv"><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></dl>';
+    }).join('');
+    document.getElementById('evPanel').innerHTML =
+      '<div class="grid g2" style="align-items:start;margin-top:14px">'
+      + '<div class="panel"><h3>' + e.title + '</h3><div style="margin-top:10px">' + rows + '</div>'
+      + '<pre style="margin-top:14px">' + e.code + '</pre>'
+      + '<p class="note" style="margin-top:12px">' + e.note + '</p></div>'
+      + '<div class="shot"><img src="' + e.shot + '" alt="' + e.cap + '"><div class="cap">' + e.cap + '</div></div>'
+      + '</div>';
+  }
+  document.getElementById('tabA').addEventListener('click', function(){
+    this.setAttribute('aria-selected','true');
+    document.getElementById('tabB').setAttribute('aria-selected','false');
+    renderEv('a');
+  });
+  document.getElementById('tabB').addEventListener('click', function(){
+    this.setAttribute('aria-selected','true');
+    document.getElementById('tabA').setAttribute('aria-selected','false');
+    renderEv('b');
+  });
+  renderEv('a');
+
+  /* ---------- replay ---------- */
+  var TOTAL = 115; /* minutes from 02:04 */
+  var A_EV = [
+    {t:2,  label:'preparing'},      {t:39, label:'env ready'},
+    {t:41, label:'rung 1 ✓', pass:true}, {t:45, label:'rung 2 ✓', pass:true},
+    {t:52, label:'rung 4 ✓', pass:true}, {t:57, label:'rung 5 ✓', pass:true},
+    {t:62, label:'PASS', pass:true}
+  ];
+  var B_EV = [
+    {t:2,  label:'queued'},         {t:44, label:'building'},
+    {t:80, label:'env ready'},      {t:84, label:'rung 1 ✓', pass:true},
+    {t:88, label:'rung 2 ✓', pass:true}, {t:96, label:'rung 4 ✓', pass:true},
+    {t:102,label:'rung 5 ✓', pass:true}, {t:108,label:'PASS', pass:true}
+  ];
+  function mkEv(row, list){
+    row.innerHTML = '';
+    list.forEach(function(e){
+      var s = document.createElement('span');
+      s.className = 'ev' + (e.pass ? ' pass' : '');
+      s.textContent = e.label;
+      row.appendChild(s);
+      e.el = s;
+    });
+  }
+  var evA = document.getElementById('evA'), evB = document.getElementById('evB');
+  var fillA = document.getElementById('fillA'), fillB = document.getElementById('fillB');
+  var phaseA = document.getElementById('phaseA'), phaseB = document.getElementById('phaseB');
+  var clock = document.getElementById('clock');
+  var timer = null, t = 0, playing = false;
+
+  function stamp(min){
+    var total = 2*60 + 4 + min;
+    var h = Math.floor(total/60) % 24, m = total % 60;
+    return (h<10?'0':'') + h + ':' + (m<10?'0':'') + m;
+  }
+  function paint(){
+    var pa = Math.min(100, (t/62)*100);
+    var pb = Math.max(0, Math.min(100, ((t-2)/106)*100));
+    fillA.style.width = pa + '%';
+    fillB.style.width = pb + '%';
+    phaseA.style.left = Math.min(92, Math.max(8, pa)) + '%';
+    phaseB.style.left = Math.min(92, Math.max(8, pb)) + '%';
+    var la = null, lb = null;
+    A_EV.forEach(function(e){ if (t>=e.t){ e.el.classList.add('in'); la = e.label; } });
+    B_EV.forEach(function(e){ if (t>=e.t){ e.el.classList.add('in'); lb = e.label; } });
+    phaseA.textContent = la || 'dispatched'; phaseA.classList.toggle('show', t>0);
+    phaseB.textContent = lb || 'dispatched'; phaseB.classList.toggle('show', t>0);
+    var note = t < 44 ? ' — A holds the build lock, B waits'
+             : (t < 62 ? ' — both lanes active' : ' — B validating alone');
+    clock.textContent = stamp(t) + (t>=TOTAL ? ' — both PASS' : note);
+  }
+  function reset(){
+    clearInterval(timer); timer = null; playing = false; t = 0;
+    mkEv(evA, A_EV); mkEv(evB, B_EV);
+    fillA.style.width = '0'; fillB.style.width = '0';
+    phaseA.classList.remove('show'); phaseB.classList.remove('show');
+    clock.textContent = '02:04 — dispatch';
+    document.getElementById('playBtn').textContent = '▶ Play the run';
+  }
+  document.getElementById('playBtn').addEventListener('click', function(){
+    if (playing){
+      clearInterval(timer); playing = false; this.textContent = '▶ Resume'; return;
+    }
+    if (t >= TOTAL) reset();
+    playing = true; this.textContent = '❚❚ Pause';
+    var btn = this;
+    timer = setInterval(function(){
+      t += 1; paint();
+      if (t >= TOTAL){
+        clearInterval(timer); playing = false; btn.textContent = '↻ Play again';
+      }
+    }, 55);
+  });
+  document.getElementById('resetBtn').addEventListener('click', reset);
+  reset();
+
+  go(0);
+})();
+</script>
+</body>
+</html>
