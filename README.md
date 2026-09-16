@@ -5,6 +5,8 @@ monorepo.
 
 ![Parallel feature development in Zora Harness: features A, B and C each have an independent worktree, plan, implementation, gates and run state. Their pushed commits enter a shared QA queue. Two reusable isolated QA slots on the current VPS run Codex with private Docker, Kind and unchanged Tilt. Startup is serialized; ready environments validate concurrently. Each feature receives its own evidence, verdict and PR. The two-slot limit applies to QA, not development.](docs/zora-harness.png)
 
+Open the [interactive two-lane harness presentation](docs/harness-presentation.html) for an animated walkthrough of the flow, VPS isolation, validation ladder and evidence from two concurrent feature runs.
+
 ## Parallel development and QA
 
 **Multiple features can be developed at the same time. The current VPS can run two
