@@ -38,7 +38,10 @@ slow check and end your turn waiting for a notification, you are permanently sta
 — your turn ending is final and nothing will wake you.
 
 ```bash
-# Tests for one package — the command the repo's hooks expect
+# Tests for one package — the command the repo's hooks expect.
+# Not every package defines test:agentic (web-app does not). Turbo reports a missing
+# task as SUCCESS having run nothing, so confirm a suite really ran; if it did not,
+# use the package's own runner (test:ci, or vitest --run) and say so in your report.
 CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<package>
 
 turbo check          # Biome: formatting + linting, read-only
@@ -79,6 +82,12 @@ serve.
   say so and stop — do not start long-lived infrastructure yourself.
 - Respect any do-not-touch list in your charter. Another agent owns those files.
 - Commit with conventional commit messages (`feat:`, `fix:`, `docs:`, `refactor:`).
+- **Never disable a commit-signing or verification setting to get a commit to land** —
+  not with `--no-gpg-sign`, not with `-c commit.gpgsign=false`, not by editing git config.
+  If signing fails (a locked key, a missing passphrase, an agent that has not got the
+  key), leave the work staged, say exactly which key and which error, and stop. The lead
+  can unlock it; a silently unsigned commit is a change to the user's security posture
+  that you were not asked to make.
 
 ## When the plan turns out to be wrong
 
@@ -97,7 +106,9 @@ Before you report finished:
 - Every new behavior has a test that failed first and passes now.
 - `turbo check` and `turbo check:types` are clean.
 - `CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<pkg>` passes
-  for every affected package — not just the one you edited last.
+  for every affected package — not just the one you edited last. A pass that ran **no
+  tests** is not a pass: check the package defines `test:agentic`, and fall back to its
+  real runner when it does not.
 - No regressions in packages that depend on anything you changed. If you touched
   `packages/*`, test the dependent services too.
 

@@ -94,6 +94,12 @@ wait for each.
 If the diff touches `packages/*`, test the dependent services too — that blast
 radius is exactly what unit tests on the package itself will not catch.
 
+**A pass that ran no tests is not a pass.** Not every package defines `test:agentic`
+(`web-app` does not), and turbo reports a missing task as success. If the run finishes
+in milliseconds, or its task count matches the package's build dependencies rather than
+its tests, no suite ran: use the package's own runner (`test:ci`, or `vitest --run`)
+and record which command produced your evidence.
+
 Then look at the tests themselves, because green is not the same as covered. A test
 that asserts a mock was called, or that was written after the code to describe what
 the code happens to do, proves nothing about the spec. Judge whether the tests would

@@ -144,6 +144,17 @@ turbo check:types
 CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<package>
 ```
 
+**Confirm the tests actually ran.** `test:agentic` is not defined in every package —
+`web-app` is one that lacks it — and turbo reports a missing task as *success* having run
+nothing. A green gate that says `FULL TURBO` in milliseconds, or whose task count matches
+the package's dependencies rather than its tests, ran no tests. Check the package's
+`scripts` and use its real runner (`test:ci`, or `vitest --run`) when `test:agentic` is
+absent, and say in the ledger which command you used:
+
+```bash
+pnpm turbo test:agentic --filter=<package> --dry=json | grep -c NONEXISTENT   # 0 = the task exists
+```
+
 Then rebase onto `origin/main` **before** validation, so the validator checks the
 code that will actually ship. Run the rebase and the post-rebase gates as separate,
 individually-checked steps — a chained command can swallow a mid-rebase conflict.

@@ -471,6 +471,12 @@ turbo check:types
 CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=<package>
 ```
 
+And check the tests *ran*. `test:agentic` is undefined in some packages — `web-app` is
+one — and turbo reports a missing task as success having executed nothing, so the gate
+comes back green with zero tests. `--dry=json` shows `<NONEXISTENT>` when that happens;
+fall back to the package's own runner. This is the §3.8 failure in miniature: the rule
+was real, nothing checked it, and it quietly stopped meaning anything.
+
 Also: verify mechanical batch edits landed by **grepping the expected before/after
 state**, not by exit code. And audit PR-body citations ("per spec X", "per source Y
 at file:line") against the actual cited location — agents produce plausible but
