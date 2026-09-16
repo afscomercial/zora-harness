@@ -93,8 +93,10 @@ Two slots are deployed on the current VPS:
 
 - Each attempt owns a checkout, Kind cluster and database, private process/network
   namespaces, `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, HOME and tool state.
-- Each sandbox owns its Docker daemon, socket and storage. Existing Tilt staging
-  paths and image tags stay inside that sandbox, including during rebuilds and pruning.
+- Each sandbox owns its Docker daemon and socket. The deployed worker retains image
+  and BuildKit cache storage separately for each QA slot across attempts, while
+  removing stale containers, networks and volumes before a new attempt starts.
+  Existing Tilt staging paths and image tags stay isolated during simultaneous runs.
 - Bootstrap is serialized to control resource peaks; ready attempts can validate
   concurrently. Further attempts queue. Aggregate sandbox memory includes the
   runner, browser, Docker/BuildKit and Kubernetes; capacity is measured for the tested six-service profile; other combinations need validation.

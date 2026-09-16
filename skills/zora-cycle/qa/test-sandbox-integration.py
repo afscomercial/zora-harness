@@ -27,6 +27,18 @@ docker run -d --name identical -p 127.0.0.1:5173:5173 \
 pid=$(docker inspect identical --format '{{.State.Pid}}')
 cat "/proc/$pid/cgroup"
 '''
+CACHE_SETUP = r'''set -euo pipefail
+mkdir -p /tmp/qa-cache-proof
+printf 'FROM %s\nRUN --mount=type=cache,id=qa-sandbox-proof,target=/proof-cache sh -c "echo warmed > /proof-cache/marker"\n' "$1" > /tmp/qa-cache-proof/Dockerfile
+DOCKER_BUILDKIT=1 docker build -q -t sandbox-proof:warm /tmp/qa-cache-proof
+'''
+CACHE_VERIFY = r'''set -euo pipefail
+test -z "$(docker container ls -aq)"
+docker image inspect sandbox-proof:warm >/dev/null
+mkdir -p /tmp/qa-cache-proof
+printf 'FROM %s\nRUN --mount=type=cache,id=qa-sandbox-proof,target=/proof-cache test -f /proof-cache/marker\n' "$1" > /tmp/qa-cache-proof/Dockerfile
+DOCKER_BUILDKIT=1 docker build -q -t sandbox-proof:verified /tmp/qa-cache-proof
+'''
 
 
 def main():
@@ -42,10 +54,11 @@ def main():
         shutil.copyfile(source / name, root / name)
     (root / 'empty-auth').mkdir()
     token = root.name.rsplit('-', 1)[-1].replace('_', 'x')
-    attempts = [root / 'jobs' / f'proof-{token}-{i}' for i in range(2)]
+    attempts = [root / 'jobs' / f'proof-{token}-{i}' for i in range(3)]
     helper = root / 'qa-sandbox.sh'
     common = os.environ | {'QA_HOME': str(root), 'QA_AUTH_HOME': str(root / 'empty-auth'),
-                           'QA_SANDBOX_MEMORY_MB': '4000'}
+                           'QA_SANDBOX_MEMORY_MB': '4000', 'QA_DOCKER_CACHE': '1'}
+    (root / 'slots').mkdir()
     log = (root / 'proof.log').open('w')
 
     def run(args, env=None, timeout=420, check=True):
@@ -63,9 +76,14 @@ def main():
     try:
         identities = []
         for i, subnet in enumerate(pool.subnets(new_prefix=30)):
+            if i == 2:
+                break
             attempts[i].mkdir(parents=True)
             host, peer = map(str, subnet.hosts())
-            env = common | {'QA_NS': f'qa-{token}-{i}', 'QA_HOST_IP': host, 'QA_PEER_IP': peer}
+            (root / 'slots' / f'{i + 1}.json').write_text(json.dumps(
+                {'attempt_id': attempts[i].name, 'slot_id': i + 1}))
+            env = common | {'QA_SLOT_ID': str(i + 1), 'QA_NS': f'qa-{token}-{i}',
+                            'QA_HOST_IP': host, 'QA_PEER_IP': peer}
             run(['bash', str(helper), 'start', str(attempts[i])], env=env)
             identity = json.loads((attempts[i] / 'sandbox.json').read_text())
             identities.append(identity)
@@ -87,13 +105,25 @@ def main():
         assert before == after
         _, code = execute(1, 'env', 'DOCKER_HOST=unix:///var/run/docker.sock', 'bash', str(helper), 'check', str(attempts[1]), check=False)
         assert code != 0, 'host Docker endpoint was accepted'
+        execute(0, 'bash', '-ec', CACHE_SETUP, 'warm', IMAGE)
         run(['systemctl', 'kill', '--kill-whom=main', '--signal=KILL', identities[0]['unit']])
         time.sleep(2)
         run(['bash', str(helper), 'down', str(attempts[0])])
+        attempts[2].mkdir(parents=True)
+        (root / 'slots/1.json').write_text(json.dumps(
+            {'attempt_id': attempts[2].name, 'slot_id': 1}))
+        first_subnet = next(pool.subnets(new_prefix=30))
+        host, peer = map(str, first_subnet.hosts())
+        env = common | {'QA_SLOT_ID': '1', 'QA_NS': f'qa-{token}-2',
+                        'QA_HOST_IP': host, 'QA_PEER_IP': peer}
+        run(['bash', str(helper), 'start', str(attempts[2])], env=env)
+        assert identities[0]['data_root'] == json.loads(
+            (attempts[2] / 'sandbox.json').read_text())['data_root']
+        execute(2, 'bash', '-ec', CACHE_VERIFY, 'verify', IMAGE)
         run(['bash', str(helper), 'verify', str(attempts[1])])
         response, _ = execute(1, 'curl', '-fsS', '--max-time', '5', 'http://127.0.0.1:5173/')
         assert response == 'environment-1'
-        log.write('PASS: private daemons/filesystems/tags/ports, aggregate memory, rebuild/prune isolation, host endpoint rejection, crash isolation\n')
+        log.write('PASS: private daemons/filesystems/tags/ports, aggregate memory, rebuild/prune isolation, host endpoint rejection, crash isolation, slot-local image and cache-mount reuse with stale-container cleanup\n')
         success = True
     finally:
         for attempt in attempts:

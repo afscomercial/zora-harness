@@ -17,6 +17,8 @@ endpoint="unix://$state/docker.sock"
 self="$(realpath "$0")"
 helper="$(dirname "$self")/qa-network.sh"
 qa_root="${QA_HOME:-$(realpath "$dir/../..")}"
+data_root="${QA_DOCKER_DATA_ROOT:-$state/docker-data}"
+cache_mode="${QA_DOCKER_CACHE:-0}"
 check() {
   python3 - "$identity" "$attempt" "$endpoint" <<'PY'
 import json,os,subprocess,sys
@@ -31,6 +33,8 @@ for key,proc in [('mount','mnt'),('net','net'),('pid','pid'),('uts','uts'),('ipc
     assert actual==d['namespaces'][key] and actual!=d['host_namespaces'][key], 'namespace mismatch: '+key
 result=subprocess.check_output(['docker','--host',endpoint,'info','--format','{{.ID}}'],text=True,timeout=15).strip()
 assert result and result==d['daemon_id'], 'private Docker identity mismatch'
+root=subprocess.check_output(['docker','--host',endpoint,'info','--format','{{.DockerRootDir}}'],text=True,timeout=15).strip()
+assert root==d['data_root'], 'private Docker storage mismatch'
 PY
 }
 verify() {
@@ -48,6 +52,9 @@ for key,proc in [('mount','mnt'),('net','net'),('pid','pid'),('uts','uts'),('ipc
 result=subprocess.check_output(['nsenter','--target',str(pid),'--mount','--net','--pid','--uts','--ipc',
     'docker','--host',endpoint,'info','--format','{{.ID}}'],text=True,timeout=15).strip()
 assert result and result==d['daemon_id'], 'private Docker identity mismatch'
+root=subprocess.check_output(['nsenter','--target',str(pid),'--mount','--net','--pid','--uts','--ipc',
+    'docker','--host',endpoint,'info','--format','{{.DockerRootDir}}'],text=True,timeout=15).strip()
+assert root==d['data_root'], 'private Docker storage mismatch'
 PY
 }
 network() {
@@ -125,10 +132,14 @@ __init)
   export HOME="$state/home" DOCKER_CONFIG="$state/home/.docker"
   export DOCKER_HOST="$endpoint"
   unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH
+  if [ "$cache_mode" = 1 ]; then
+    exec 6> "$(dirname "$data_root")/daemon.lock"
+    flock -n 6 || { echo 'Docker cache slot is already in use' >&2; exit 1; }
+  fi
   aggregate_cgroup=$(dirname "$(awk -F: '$1 == "0" {print $3}' /proc/self/cgroup)")
   [[ "$aggregate_cgroup" = /* && "$aggregate_cgroup" = *"/$slice" ]] || { echo 'unexpected sandbox cgroup' >&2; exit 1; }
   dockerd --config-file "$state/daemon.json" --host "$endpoint" \
-    --data-root "$state/docker-data" --exec-root /run/qa-docker --pidfile /run/qa-docker.pid \
+    --data-root "$data_root" --exec-root /run/qa-docker --pidfile /run/qa-docker.pid \
     --exec-opt native.cgroupdriver=cgroupfs --cgroup-parent "$aggregate_cgroup" \
     > "$state/dockerd.log" 2>&1 &
   daemon_pid=$!
@@ -136,6 +147,20 @@ __init)
   for _ in $(seq 1 90); do
     kill -0 "$daemon_pid" 2>/dev/null || { tail -40 "$state/dockerd.log"; exit 1; }
     if docker --host "$endpoint" info --format '{{.ID}}' > "$state/daemon-id" 2>/dev/null; then
+      if [ "$cache_mode" = 1 ]; then
+        # A previous attempt may have been killed. Keep images and BuildKit state,
+        # but never let its containers, networks or volumes enter this attempt.
+        old_containers=$(docker --host "$endpoint" container ls -aq) || exit 1
+        if [ -n "$old_containers" ]; then
+          printf '%s\n' "$old_containers" | xargs -r docker --host "$endpoint" container rm -f >/dev/null || exit 1
+        fi
+        old_volumes=$(docker --host "$endpoint" volume ls -q) || exit 1
+        if [ -n "$old_volumes" ]; then
+          printf '%s\n' "$old_volumes" | xargs -r docker --host "$endpoint" volume rm -f >/dev/null || exit 1
+        fi
+        docker --host "$endpoint" network prune -f >/dev/null || exit 1
+        [ -z "$(docker --host "$endpoint" container ls -aq)" ] || { echo 'stale cached containers remain' >&2; exit 1; }
+      fi
       touch "$state/ready"
       wait "$daemon_pid"
       exit $?
@@ -152,13 +177,34 @@ start)
   if [ -e "$identity" ]; then verify; exit $?; fi
   if [ -e "$state/owner.json" ]; then echo 'incomplete sandbox exists; run down first' >&2; exit 1; fi
   if systemctl is-active --quiet "$unit" || systemctl is-active --quiet "$slice"; then echo 'unit name collision' >&2; exit 1; fi
+  [[ "$cache_mode" = 0 || "$cache_mode" = 1 ]] || { echo 'invalid Docker cache mode' >&2; exit 2; }
+  if [ "$cache_mode" = 1 ]; then
+    slot="${QA_SLOT_ID:?cached daemon requires an owned slot}"
+    [[ "$slot" =~ ^[1-9][0-9]{0,2}$ ]] || { echo 'invalid Docker cache slot' >&2; exit 2; }
+    python3 - "$qa_root/slots/$slot.json" "$attempt" <<'PY'
+import json,sys
+record=json.load(open(sys.argv[1]))
+assert record['attempt_id']==sys.argv[2] and str(record['slot_id'])==sys.argv[1].rsplit('/',1)[-1][:-5], 'cache slot ownership mismatch'
+PY
+    cache_dir="$qa_root/cache/docker-slots/$slot"
+    for path in "$qa_root/cache" "$qa_root/cache/docker-slots" "$cache_dir" "$cache_dir/docker-data"; do
+      [ ! -L "$path" ] || { echo 'symlink in Docker cache path' >&2; exit 2; }
+    done
+    mkdir -p "$cache_dir"
+    chmod 700 "$qa_root/cache/docker-slots" "$cache_dir"
+    data_root="$cache_dir/docker-data"
+  fi
   mkdir -p "$state/home"
   python3 - "$state/owner.json" "$attempt" "$dir" "$QA_NS" "$QA_HOST_IP" "$QA_PEER_IP" <<'PY'
 import json,sys
 path,attempt,directory,ns,host,peer=sys.argv[1:]
 json.dump(dict(attempt_id=attempt,directory=directory,netns=ns,host_ip=host,peer_ip=peer),open(path,'w'))
 PY
-  printf '{}\n' > "$state/daemon.json"
+  if [ "$cache_mode" = 1 ]; then
+    printf '{"builder":{"gc":{"enabled":true,"defaultKeepStorage":"20GB"}}}\n' > "$state/daemon.json"
+  else
+    printf '{}\n' > "$state/daemon.json"
+  fi
   # Auth files are never logged and remain within this attempt's private HOME.
   source_home="${QA_AUTH_HOME:-$HOME}"
   for relative in .gitconfig .git-credentials .npmrc .ssh .codex/auth.json .config/gh/hosts.yml .docker/config.json; do
@@ -172,6 +218,7 @@ PY
   cp "/etc/netns/$QA_NS/resolv.conf" "$state/resolv.conf"
   systemctl set-property --runtime "$slice" "MemoryMax=${QA_SANDBOX_MEMORY_MB}M" MemorySwapMax=0 MemoryAccounting=yes CPUAccounting=yes
   systemd-run --quiet --collect --unit="$unit" --slice="$slice" \
+    --setenv="QA_DOCKER_CACHE=$cache_mode" --setenv="QA_DOCKER_DATA_ROOT=$data_root" \
     --property=Type=exec --property=KillMode=control-group --property=TimeoutStopSec=30 \
     --property=Delegate=yes --property=UMask=0077 --property="NetworkNamespacePath=/run/netns/$QA_NS" \
     --property="StandardOutput=append:$state/init.log" --property="StandardError=append:$state/init.log" \
@@ -183,9 +230,9 @@ PY
     sleep 1
   done
   [ -f "$state/ready" ] || { echo 'sandbox start timed out' >&2; exit 1; }
-  python3 - "$identity" "$state" "$attempt" "$unit" "$slice" "$endpoint" <<'PY'
+  python3 - "$identity" "$state" "$attempt" "$unit" "$slice" "$endpoint" "$data_root" <<'PY'
 import json,os,subprocess,sys
-path,state,attempt,unit,slice,endpoint=sys.argv[1:]
+path,state,attempt,unit,slice,endpoint,data_root=sys.argv[1:]
 main=int(subprocess.check_output(['systemctl','show',unit,'--property=MainPID','--value'],text=True))
 children=open(f'/proc/{main}/task/{main}/children').read().split()
 assert len(children)==1, 'cannot identify namespace init process'
@@ -193,7 +240,7 @@ pid=int(children[0])
 names={'mount':'mnt','net':'net','pid':'pid','uts':'uts','ipc':'ipc'}
 cgroup=subprocess.check_output(['systemctl','show',slice,'--property=ControlGroup','--value'],text=True).strip()
 assert cgroup.startswith('/') and cgroup!='/'
-data=dict(attempt_id=attempt,unit=unit,slice=slice,cgroup=cgroup,docker_endpoint=endpoint,
+data=dict(attempt_id=attempt,unit=unit,slice=slice,cgroup=cgroup,docker_endpoint=endpoint,data_root=data_root,
           daemon_id=open(state+'/daemon-id').read().strip(),init_pid=pid,
           namespaces={k:os.readlink(f'/proc/{pid}/ns/{v}') for k,v in names.items()},
           host_namespaces={k:os.readlink('/proc/self/ns/'+v) for k,v in names.items()})

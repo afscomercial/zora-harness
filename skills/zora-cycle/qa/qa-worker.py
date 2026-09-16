@@ -25,7 +25,7 @@ DEFAULTS = {
     'host_reserve_mb': 5000, 'slot_memory_mb': 13000, 'min_disk_gb': 60,
     'process_memory_max_mb': 8000, 'cluster_memory_max_mb': 5000, 'turbo_concurrency': 2,
     'max_load_per_cpu': 2.0, 'poll_seconds': 5, 'retention_seconds': 21600,
-    'identity_bundles': {}, 'profiles': {},
+    'identity_bundles': {}, 'profiles': {}, 'docker_cache_per_slot': False,
 }
 
 def atomic(path, data):
@@ -80,6 +80,8 @@ class Worker:
             raise ValueError('protocol 5 requires sandbox isolation')
         if c['driver'] != 'kind':
             raise ValueError('managed worker currently supports Kind only')
+        if not isinstance(c['docker_cache_per_slot'], bool):
+            raise ValueError('docker_cache_per_slot must be a boolean')
         octets = c['subnet_base'].split('.')
         if len(octets) != 2 or not all(x.isdigit() and 0 <= int(x) <= 255 for x in octets):
             raise ValueError('subnet_base must be two IPv4 octets')
@@ -227,6 +229,7 @@ class Worker:
         identity = self.cfg['identity_bundles'].get(str(slot), {})
         env = {
             'QA_MANAGED': '1', 'QA_SLOT_ID': str(slot), 'QA_WORKER_ID': d['worker_id'],
+            'QA_DOCKER_CACHE': '1' if self.cfg['docker_cache_per_slot'] else '0',
             'QA_ENVIRONMENT_ID': d['environment_id'], 'QA_JOB_ID': d['job_id'],
             'QA_ATTEMPT_ID': d['attempt_id'], 'QA_NET_ISOLATION': 'netns',
             'QA_EXECUTION_ISOLATION': 'sandbox',

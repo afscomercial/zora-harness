@@ -133,15 +133,18 @@ Validation normally runs as a remote job. Codex is never a Claude Code subagent;
 2. **Queue and reserve.** A systemd supervisor reserves capacity. The current VPS has
    two slots; further attempts wait. Queue time does not consume a feature-fix retry.
 3. **Prepare the environment.** Each attempt gets its own checkout, Kind cluster,
-   database, private Docker daemon/storage, process/network namespaces, kubeconfig,
+   database, private Docker daemon/socket, process/network namespaces, kubeconfig,
    HOME/tool state, and private `/tmp`, `/var/tmp`, `/run`, `/dev/shm`. Bootstrap
    is serialized to limit resource peaks; this does not serialize the QA that follows.
+   On the deployed worker, each slot retains its own Docker images and BuildKit cache
+   across attempts. Old containers, networks and volumes are cleared before reuse.
 4. **Run Codex QA.** Ready environments validate concurrently through static gates,
    focused tests, API/database checks, authenticated browser testing, and adversarial
    checks. The two current slots use the same approved login in separate browser
    sessions, with independently seeded databases.
-5. **Clean up and publish.** The supervisor cleans only attempt-owned resources and
-   releases the slot. Failed cleanup quarantines capacity; retained environments hold
+5. **Clean up and publish.** The supervisor cleans attempt-owned resources and
+   releases the slot, retaining only that slot's Docker build cache. Failed cleanup
+   quarantines capacity; retained environments hold
    their slots until release or expiry. It records cleanup status and publishes the
    final archive before marking the attempt terminal.
 6. **Verify the result.** The lead downloads the verdict, manifest, checksums, event

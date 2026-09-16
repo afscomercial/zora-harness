@@ -33,6 +33,15 @@ class Tests(unittest.TestCase):
         w.atomic(self.path/'in/dispatch.json',self.d)
     def tearDown(self):
         self.tmp.cleanup()
+    def test_slot_cache_is_explicit_and_slot_scoped(self):
+        w.atomic(self.path / 'worker-state.json', {'submitted_at': time.time()})
+        self.assertEqual(self.worker.environment(self.path, 1, self.d)['QA_DOCKER_CACHE'], '0')
+        self.worker.cfg['docker_cache_per_slot'] = True
+        one = self.worker.environment(self.path, 1, self.d)
+        two = self.worker.environment(self.path, 2, self.d)
+        self.assertEqual(one['QA_DOCKER_CACHE'], '1')
+        self.assertEqual(two['QA_DOCKER_CACHE'], '1')
+        self.assertNotEqual(one['QA_SLOT_ID'], two['QA_SLOT_ID'])
     def test_failure_after_slot_release_is_terminal(self):
         w.atomic(self.path/'ownership.json', {'slot_id': 1, 'attempt_id': self.path.name})
         self.worker.failure(self.path,self.d,'interrupted after cleanup')

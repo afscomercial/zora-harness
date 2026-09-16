@@ -27,13 +27,13 @@ The replacement runs the original pushed commit and its existing Tilt configurat
 | Q2 | Supervisor ownership, recovery, quarantine and retention | Implemented; scoped live checks passed | Runtime/supervisor integration, A teardown and queued-job cancellation passed. Live retention, reboot and injected cleanup-failure drills remain. |
 | Q3 | Pantheon staging prerequisite | Superseded | No Pantheon edits, staging override or capability-marker check; no serial remote fallback. |
 | Q4 | Private filesystem, process and network environment | Runtime proof passed | Private `/tmp`, `/var/tmp`, `/run`, `/dev/shm`, HOME/tool state and process/network namespaces. Existing Tilt paths must work unchanged. |
-| Q5 | Private Docker daemon and storage | Runtime proof passed | Own socket, daemon, images, containers and build cache per attempt; no host Docker socket access. Verify standard Tilt builds and cleanup. |
+| Q5 | Private Docker daemon and slot cache | Runtime proof passed; slot cache implemented | Own daemon/socket per attempt and separate writable data roots per concurrent slot. Optional per-slot image and BuildKit cache retention preserves warm builds across attempts; startup clears stale containers, networks and volumes. Full Tilt warm-run timing remains to measure. |
 | Q6 | Capacity and telemetry | Measured for six-service profile | Deployed 13,000 MiB aggregate sandbox budget includes runner/browser, Docker/BuildKit and Kind; observed host headroom and no OOM for this pair. Broader profiles and repeated cold-build load remain unverified. |
 | Q7 | Evidence and protocol compatibility | Implemented; scoped live checks passed | Protocol-5 identity and redaction regressions pass; A archive collected with 102 files. Original INCOMPLETE verdict is preserved; B archive collected and exact-source remote checker PASS; both manifests report clean cleanup. |
 | Q8 | Test identity and external integration isolation | Retained / partial | Approved matching identity bundles; same account only under explicit concurrent-login policy. External mutable queues/storage/callbacks still need audit. |
 | Q9 | First VPS two-slot sandbox rollout | Scoped isolation acceptance passed | Distinct original commits, overlapping six-service environments, A removal with B still healthy, and third-job admission/cancel passed. B final archive/checker/teardown passed. Live retention/reboot and broader capacity remain. |
 | Q10 | Second VPS | Pending | Worker inventory exists; repeat dispatch/collect/cancel and sandbox proof on another physical host. |
-| Q11 | Host maintenance and artifact GC | Partial | Installer exclusion exists; ownership-aware historical artifact cleanup and general maintenance interface remain. |
+| Q11 | Host maintenance and artifact GC | Partial | Installer exclusion and 20 GB BuildKit GC target per cached slot exist; old image-tag eviction, historical artifact cleanup and general maintenance interface remain. |
 
 ## Replacement QA contract (protocol 5)
 
@@ -45,9 +45,12 @@ The replacement runs the original pushed commit and its existing Tilt configurat
 - **Private defaults:** ordinary `/tmp/tilt-pruned`, `/tmp/tilt-dev-deps-context`, HOME,
   tool runtime state and service ports belong to the sandbox. Shared-path developer
   scripts must not reach another attempt's resources.
-- **Private Docker:** the sandbox owns its daemon, socket, data root and build cache.
-  Kind creates and loads images through that daemon. Mutable tags, Docker pruning and
-  BuildKit cannot mutate the host daemon or a neighbor. No shared host socket mount.
+- **Private Docker:** the sandbox owns its daemon and socket. Concurrent slots have
+  separate writable data roots. When the worker enables `docker_cache_per_slot`, a
+  later attempt on the same slot keeps its images and BuildKit cache mounts, while
+  stale containers, networks and volumes are removed before readiness. Kind creates
+  and loads images through that daemon. Mutable tags, Docker pruning and BuildKit
+  cannot mutate the host daemon or a neighbor. No shared host socket mount.
 - **Supervision:** the host supervisor owns admission and a separate sandbox unit.
   Persist ownership before creating resources. Aggregate sandbox limits account for
   Docker/BuildKit/Kind as well as runner/browser processes; descendants cannot escape
@@ -56,7 +59,8 @@ The replacement runs the original pushed commit and its existing Tilt configurat
   the 32,094 MiB VPS. The six-service pair completed with measured headroom and no OOM.
   Other profile pairs and repeated cold-build pressure still require measurement.
 - **Recovery:** cleanup validates ownership, stops the sandbox, unmounts owned mounts,
-  removes private Docker storage/networking and checks absence. Failed proof quarantines
+  removes attempt-owned networking and runtime storage, and checks absence. A configured
+  slot cache remains on the worker for subsequent attempts. Failed proof quarantines
   the slot. Retained sandboxes occupy capacity until release/expiry. Do not prune host
   Docker while performing an attempt's cleanup.
 - **Evidence:** immutable job/attempt/worker/environment/commit/charter binding;
@@ -82,6 +86,14 @@ tests (86 total).
 The sandbox checks are [test-sandbox.py](../../skills/zora-cycle/qa/test-sandbox.py);
 its live opt-in proof is [test-sandbox-integration.py](../../skills/zora-cycle/qa/test-sandbox-integration.py).
 These results do not certify the full application workload or its capacity.
+
+Slot caching was enabled on the first VPS after a live proof of two concurrent
+private daemons and a restart on slot 1. The restarted attempt found its old image
+and BuildKit cache-mount contents, cleared the prior container, and left slot 2
+healthy. The proof recorded two distinct data roots and daemon IDs. Worker,
+sandbox-guard and runner regression suites passed on Linux (26, 7 and 21 tests).
+The first real application QA run on each slot is still cold; repeat-run Tilt timing,
+image-store growth and all-services capacity have not yet been measured.
 
 The first full application boot reached healthy selected Tilt services and web-app
 HTTP 200, then failed the browser boundary self-test: the sandbox's private HOME did

@@ -365,6 +365,7 @@ Deployed worker configuration (credentials remain private; capacity verified onl
   "slots": 2,
   "isolation": "sandbox",
   "driver": "kind",
+  "docker_cache_per_slot": true,
   "subnet_base": "10.77",
   "queue_timeout": 7200,
   "run_timeout": 14400,
@@ -403,8 +404,16 @@ The runner tests the original pushed Pantheon commit without modifying tracked f
 Do not require, merge or cherry-pick the superseded staging PR. No staging marker,
 `ZORA_TILT_STAGING_ROOT` or old-commit exclusive execution path exists in new dispatches.
 Normal Tilt `/tmp` staging paths resolve privately. `/var/tmp`, `/run`, `/dev/shm`,
-HOME and tool state are also private. Each sandbox owns its Docker socket, data root,
-images and BuildKit cache; Kind creates and loads images inside that daemon.
+HOME and tool state are also private. Each sandbox owns its Docker daemon and socket;
+simultaneous slots have separate data roots, images and BuildKit caches. With
+`docker_cache_per_slot` enabled, each slot reuses its own Docker data root on later
+attempts. Before a new attempt is marked ready, the sandbox removes any old containers,
+volumes and custom networks while preserving images and BuildKit cache mounts. The
+BuildKit cache has a 20 GB garbage-collection target per slot. A first run on each
+slot is cold; this cache does not share layers across slots or physical VPSs.
+Kind creates and loads images inside the selected private daemon.
+BuildKit GC does not cap tagged Docker images. Keep the worker's disk-headroom
+admission guard and measure image-store growth before expanding the number of slots.
 
 Use only the supplied Docker endpoint and kubeconfig. Never reach the host daemon,
 host namespaces or another attempt. The unchanged developer cleanup shortcut can
