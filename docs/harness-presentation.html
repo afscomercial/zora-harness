@@ -487,12 +487,12 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 <section class="slide resource-slide" aria-label="VPS resource usage">
   <div class="inner">
     <div class="eyebrow">07 · VPS capacity</div>
-    <h2>Two parallel QA environments fit on one 8-vCPU, 32-GB VPS</h2>
+    <h2>Two parallel QA environments fit on one 8-vCPU, 32-GiB VPS</h2>
     <p class="lede">Measured during the scoped six-service, two-slot acceptance run. Across 290 host samples, memory and disk kept substantial headroom and the kernel reported no out-of-memory events.</p>
     <div class="resource-stats">
       <div class="resource-stat"><b>8</b><span>virtual CPUs</span></div>
-      <div class="resource-stat"><b>31.34 GiB</b><span>host memory · 32,094 MiB</span></div>
-      <div class="resource-stat"><b>387 GB</b><span>host disk capacity</span></div>
+      <div class="resource-stat"><b>31.34 GiB</b><span>host memory</span></div>
+      <div class="resource-stat"><b>387 GiB</b><span>host disk capacity</span></div>
       <div class="resource-stat"><b>2</b><span>isolated QA slots</span></div>
     </div>
     <div class="resource-grid">
@@ -503,26 +503,26 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
           <div class="meter"><span class="meter-fill pass" style="--w:69.8%"></span></div>
         </div>
         <div class="resource-row">
-          <div class="resource-label"><span>Lane A process peak</span><strong>4.83 GiB / 8,000 MiB cap · 62%</strong></div>
+          <div class="resource-label"><span>Lane A process peak</span><strong>4.83 / 7.81 GiB cap · 62%</strong></div>
           <div class="meter"><span class="meter-fill a" style="--w:61.8%"></span></div>
         </div>
         <div class="resource-row">
-          <div class="resource-label"><span>Lane B process peak</span><strong>4.28 GiB / 8,000 MiB cap · 55%</strong></div>
+          <div class="resource-label"><span>Lane B process peak</span><strong>4.28 / 7.81 GiB cap · 55%</strong></div>
           <div class="meter"><span class="meter-fill" style="--w:54.8%"></span></div>
         </div>
         <p class="note" style="margin-top:11px">The lane peaks cover their runner and browser processes. Host sampling also captures Docker, BuildKit, Kind and the operating system.</p>
       </div>
       <div class="panel">
         <h3>Capacity reserved before work starts</h3>
-        <div class="budget" aria-label="31,000 MiB reserved from 32,094 MiB: 13,000 for slot 1, 13,000 for slot 2, and 5,000 for the host">
+        <div class="budget" aria-label="30.27 GiB reserved from 31.34 GiB: 12.70 GiB for slot 1, 12.70 GiB for slot 2, and 4.88 GiB for the host">
           <span class="s1">slot 1</span><span class="s2">slot 2</span><span class="host">host</span><span class="spare"></span>
         </div>
-        <p class="note" style="margin-top:7px">Admission reserves 13,000 MiB per slot plus 5,000 MiB for the host. These are safety budgets, not measured consumption.</p>
+        <p class="note" style="margin-top:7px">Admission reserves 12.70 GiB per slot plus 4.88 GiB for the host. These are safety budgets, not measured consumption.</p>
         <div class="resource-facts">
           <div class="resource-fact"><b>274.4 GiB</b><span>minimum free disk observed</span></div>
           <div class="resource-fact"><b>0 OOM</b><span>out-of-memory events</span></div>
           <div class="resource-fact"><b>37m / 25m</b><span>cold bootstrap: A / B</span></div>
-          <div class="resource-fact"><b>20 GB × 2</b><span>BuildKit cache target</span></div>
+          <div class="resource-fact"><b>~20 GiB × 2</b><span>BuildKit cache target</span></div>
         </div>
         <p class="note" style="margin-top:10px">Storage I/O was the bottleneck. Bootstrap runs one slot at a time to control that peak; once ready, both Codex validations overlap.</p>
       </div>
