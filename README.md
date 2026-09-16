@@ -85,7 +85,7 @@ end, on this machine only.
 
 Validation runs as a remote job: the lead freezes and pushes a commit, writes a
 charter, and `run-codex-qa` sends an immutable attempt over SSH to a selected worker.
-Codex (`gpt-6-astra`) runs the validation ladder; the lead checks the downloaded
+Codex (`gpt-5.6-sol`) runs the validation ladder; the lead checks the downloaded
 verdict and evidence with `verdict-check.sh --remote` before making the final call.
 
 The replacement worker uses **protocol 5 with mandatory per-attempt sandboxes**.
@@ -133,7 +133,7 @@ Isolation is the mechanism, not a side effect.
 
 **Why validation runs on a different model.** Fresh context is not enough if the
 reviewer shares the author's model — it shares the author's blind spots too. The
-implementer is on Opus; QA normally runs on another vendor entirely (OpenAI's Astra on
+implementer is on Opus; QA normally runs on another vendor entirely (OpenAI's Sol on
 the QA VM), and the local fallback on Fable. The only rule is that it differs from the
 implementer's.
 

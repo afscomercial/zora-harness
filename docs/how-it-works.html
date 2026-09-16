@@ -224,7 +224,7 @@
   <dl class="factbar">
     <div class="fact"><dt>Pattern</dt><dd>orchestrator&ndash;worker</dd></div>
     <div class="fact"><dt>Agents</dt><dd>3 &middot; fable / opus / fable</dd></div>
-    <div class="fact"><dt>QA</dt><dd>codex &middot; gpt-6-astra &middot; VM</dd></div>
+    <div class="fact"><dt>QA</dt><dd>codex &middot; gpt-5.6-sol &middot; VM</dd></div>
     <div class="fact"><dt>Source</dt><dd>housenumbers/zora-harness</dd></div>
     <div class="fact"><dt>Loads from</dt><dd>~/.claude &middot; symlinked</dd></div>
     <div class="fact"><dt>Repo footprint</dt><dd>none</dd></div>
@@ -307,7 +307,7 @@
           </tr>
           <tr>
             <td><span class="dot" style="background:var(--role-val)"></span><strong>Codex QA</strong> <span class="chip drop">remote job</span></td>
-            <td><code>gpt-6-astra</code></td><td><code>high</code></td><td>full access, but only inside the disposable QA VM</td>
+            <td><code>gpt-5.6-sol</code></td><td><code>high</code></td><td>full access, but only inside the disposable QA VM</td>
           </tr>
         </tbody>
       </table>
@@ -350,7 +350,7 @@ CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1         <span class="cmt"># override frontmat
 
     <h3 id="qavm">QA on an isolated VM</h3>
     <p><strong>Multiple features develop in parallel.</strong> Each lane owns its worktree, plan, implementation, gates and run state. Their commits feed a shared QA queue. The current VPS has two reusable QA slots; this limits concurrent QA attempts, not development lanes. Evidence, verdicts and PRs remain separate for each feature.</p>
-    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> uploads an immutable attempt to a selected worker. A systemd supervisor queues it for one of two slots. Protocol 5 gives each attempt its own checkout, Kind cluster/database, Docker daemon/storage, process/network namespaces, temporary files, HOME and tool state. Bootstrap is serialized to control resource usage; ready environments run Codex (<code>gpt-6-astra</code>) concurrently.</p>
+    <p>Validation normally runs as a <strong>remote job</strong>, not a subagent. The lead freezes the commit, pushes it, and writes a QA charter &mdash; commits, task, acceptance criteria, Tilt profile, services, test accounts, required rungs, and nothing about how the change was built. <code>run-codex-qa</code> uploads an immutable attempt to a selected worker. A systemd supervisor queues it for one of two slots. Protocol 5 gives each attempt its own checkout, Kind cluster/database, Docker daemon/storage, process/network namespaces, temporary files, HOME and tool state. Bootstrap is serialized to control resource usage; ready environments run Codex (<code>gpt-5.6-sol</code>) concurrently.</p>
     <div class="scroller">
       <table>
         <thead><tr><th>Step</th><th>Where</th><th>What happens</th></tr></thead>
@@ -518,6 +518,7 @@ verdict-check.sh "$ATTEMPT" "$PWD" --remote</code></pre></div>
 turbo check:types
 CI=true NO_COLOR=1 TURBO_UI=false pnpm turbo test:agentic --filter=&lt;package&gt;</code></pre>
     </div>
+    <p>And check the tests <em>ran</em>. <code>test:agentic</code> is undefined in some packages &mdash; <code>web-app</code> is one &mdash; and turbo reports a missing task as success having executed nothing, so the gate comes back green with zero tests. <code>--dry=json</code> shows <code>&lt;NONEXISTENT&gt;</code> when that happens; fall back to the package&rsquo;s own runner. This is the honest-limitation problem in miniature: the rule was real, nothing checked it, and it quietly stopped meaning anything.</p>
     <p>Also: verify mechanical batch edits landed by <strong>grepping the expected before/after state</strong>, not by exit code. And audit PR-body citations &mdash; &ldquo;per spec X&rdquo;, &ldquo;per source Y at file:line&rdquo; &mdash; against the actual cited location. Agents produce plausible but fabricated attributions, and a PR body is where they are least likely to be checked.</p>
 
     <h3 id="p8"><span class="h3num">3.8</span>The honest limitation</h3>

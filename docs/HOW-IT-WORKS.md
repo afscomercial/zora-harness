@@ -51,7 +51,7 @@ Three definitions in `agents/`, symlinked into `~/.claude/agents/`:
 | `zora-planner` | `fable` | `high` | allowlist: `Read`, `Grep`, `Glob`, web, skills — **no Bash, Write or Edit** |
 | `zora-implementer` | `opus` | `xhigh` | all |
 | `zora-validator` | `fable` | `high` | all, preloads `agent-browser`, writes `verdict.json` — local fallback |
-| **Codex QA** — remote job, not a subagent | `gpt-6-astra` | `high` | full access, but only inside the disposable QA VM |
+| **Codex QA** — remote job, not a subagent | `gpt-5.6-sol` | `high` | full access, but only inside the disposable QA VM |
 
 Model and reasoning effort are pinned in each file's frontmatter. The planner's
 read-only status is enforced by a `tools` allowlist, not by asking it nicely. It has
