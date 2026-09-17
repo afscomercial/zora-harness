@@ -353,9 +353,30 @@ img{max-width:100%; display:block}
 
 <main class="deck" id="deck">
 
-<section class="slide on" id="flowSlide" aria-label="Complete parallel harness flow">
+<section class="slide on" id="overviewSlide" aria-label="Harness overview">
   <div class="inner">
-    <div class="eyebrow">Start here · interactive overview</div>
+    <div class="eyebrow">Start here · overall overview</div>
+    <h1>From a feature idea to a reviewed pull request</h1>
+    <p class="lede">The harness gives each agent a clear job, keeps parallel features separate, and requires independent QA evidence before a feature is ready for review.</p>
+    <div class="pipe" id="pipe">
+      <div class="step"><span class="tag t-b">zora-planner</span><b style="margin-top:10px">1. Plan</b><span>Turns the request into a clear plan and defines what success means.</span></div>
+      <div class="step"><span class="tag t-a">zora-implementer + Claude</span><b style="margin-top:10px">2. Build &amp; check</b><span>Builds the feature in its own lane, then runs code checks and tests.</span></div>
+      <div class="step"><span class="tag t-pass">Codex QA</span><b style="margin-top:10px">3. Test independently</b><span>Tests the exact commit in an isolated VPS environment and records evidence.</span></div>
+      <div class="step"><span class="tag">Claude + reviewers</span><b style="margin-top:10px">4. Review &amp; deliver</b><span>Checks the evidence, opens the pull request, and handles review feedback.</span></div>
+    </div>
+    <div class="grid g2">
+      <div class="panel laneline a"><h3>Multiple features can move at once</h3><p class="note" style="margin-top:7px">Each feature has its own worktree, history, QA result, and pull request. The current VPS can test two ready features at the same time.</p></div>
+      <div class="panel" style="border-color:color-mix(in srgb,var(--fail) 45%,var(--line))"><h3>Failures return to the right step</h3><p class="note" style="margin-top:7px">Failed checks return to Build. A confirmed product defect from QA also returns to Build. A QA environment problem retries the same commit.</p></div>
+    </div>
+    <p class="note">The harness stops at a reviewed pull request with green CI. Merging remains a separate decision.</p>
+  </div>
+</section>
+
+
+
+<section class="slide" id="flowSlide" aria-label="Complete parallel harness flow">
+  <div class="inner">
+    <div class="eyebrow">01 · parallel flow · interactive</div>
     <h2>Two features move through the harness at the same time</h2>
     <p class="lede">Claude coordinates two separate development lanes. The VPS queue sends each feature to its own QA slot, while failures loop back for a fix and another check.</p>
     <div class="flow-legend" aria-label="Flow colors">
@@ -393,7 +414,7 @@ img{max-width:100%; display:block}
       </div>
       <div class="retry-routes" aria-label="Failure return paths">
         <div class="retry-loop check-loop"><span class="retry-arrow">← ←</span><b>Checks fail:</b> return to Build, fix, and check again</div>
-        <div class="retry-loop qa-loop"><span class="retry-arrow">← ← ←</span><b>QA fails:</b> return to Build, then repeat Checks → Queue → QA</div>
+        <div class="retry-loop qa-loop"><span class="retry-arrow">← ← ←</span><b>QA finds a product defect:</b> return to Build, then repeat Checks → Queue → QA</div>
       </div>
     </div>
     <div class="panel flow-detail" id="flowDetail" aria-live="polite" aria-atomic="true"></div>
@@ -408,9 +429,9 @@ img{max-width:100%; display:block}
 
 
 <!-- 1 ─────────────────────────────── -->
-<section class="slide" aria-label="Title">
+<section class="slide" aria-label="Real two-feature run">
   <div class="inner">
-    <div class="eyebrow">zora-harness</div>
+    <div class="eyebrow">02 · real run · zora-harness</div>
     <div class="hero">
       <div style="display:flex;flex-direction:column;gap:18px">
         <h1>Two lanes,<br>one night.</h1>
@@ -436,36 +457,16 @@ img{max-width:100%; display:block}
         </div>
       </div>
     </div>
-    <p class="note">Use ← → or the controls below. Explore the opening flow and the interactive QA, replay and evidence slides.</p>
+    <p class="note">Use ← → or the controls below. Explore the parallel flow and the interactive QA, replay and evidence slides.</p>
   </div>
 </section>
 
-<!-- 2 ─────────────────────────────── -->
-<section class="slide" aria-label="The cycle">
-  <div class="inner">
-    <div class="eyebrow">01 · The cycle</div>
-    <h2>One lead, three specialists, and a rule about evidence</h2>
-    <p class="lede">Your interactive session is the lead. Every result returns to it — agents never hand off to each other, because that is what strips an author's reasoning out before anyone checks their work.</p>
-    <div class="pipe" id="pipe">
-      <div class="step"><b>Plan</b><span>Read-only agent. No Bash, no Write — enforced by a tool allowlist, not by asking.</span></div>
-      <div class="step"><b>Approve</b><span>You read the plan. Last checkpoint before autonomous execution.</span></div>
-      <div class="step"><b>Implement</b><span>Test-first, inside one lane worktree. Never touches a sibling lane.</span></div>
-      <div class="step"><b>Gates</b><span>The lead re-runs lint, types and tests itself. Self-reports are not evidence.</span></div>
-      <div class="step"><b>Validate</b><span>Remote QA on a disposable VPS environment. Fresh context, different vendor.</span></div>
-      <div class="step"><b>Judge</b><span>A script checks the verdict. Then a human reads the evidence.</span></div>
-    </div>
-    <div class="grid g3">
-      <div class="panel"><h3>Fresh context is the mechanism</h3><p class="note" style="margin-top:6px">The validator receives the spec and the diff — never the implementer's reasoning. An agent that talks itself into a shortcut while building will carry the same reasoning into checking its own work.</p></div>
-      <div class="panel"><h3>A different model, deliberately</h3><p class="note" style="margin-top:6px">The implementer runs on Opus. QA runs on OpenAI's <code>gpt-5.6-sol</code> through Codex. A reviewer sharing the author's model shares the author's blind spots.</p></div>
-      <div class="panel"><h3>A PASS is a file</h3><p class="note" style="margin-top:6px"><code>verdict-check.sh</code> refuses a PASS that is for an older commit, skipped a gate, or claims a completed validation step without a matching evidence file. What it cannot check is whether the evidence is honest — so a person still reads it.</p></div>
-    </div>
-  </div>
-</section>
+
 
 <!-- 3 ─────────────────────────────── -->
 <section class="slide" aria-label="Why lanes">
   <div class="inner">
-    <div class="eyebrow">02 · Isolation</div>
+    <div class="eyebrow">03 · Isolation</div>
     <h2>Two features, two working trees, zero collisions</h2>
     <p class="lede">Each feature gets its own git worktree, its own branch, its own checkout. Two implementer agents wrote code at the same time and neither could see the other's files. The proof is not a diagram — it is two screenshots taken from two environments.</p>
     <div class="swap">
@@ -492,7 +493,7 @@ img{max-width:100%; display:block}
 <!-- 4 ─────────────────────────────── -->
 <section class="slide" aria-label="QA on the VPS">
   <div class="inner">
-    <div class="eyebrow">03 · The VPS</div>
+    <div class="eyebrow">04 · The VPS</div>
     <h2>Why QA lives on a machine that holds nothing valuable</h2>
     <p class="lede">Codex needs Docker, Kubernetes, a browser and the network to test anything for real. An agent with that much access belongs somewhere disposable — and somewhere that has never seen the implementer's reasoning, so the fresh-eyes rule holds by construction.</p>
     <div class="grid g2">
@@ -525,7 +526,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 <!-- 5 ─────────────────────────────── -->
 <section class="slide" aria-label="Five QA validation steps">
   <div class="inner">
-    <div class="eyebrow">04 · QA validation — interactive</div>
+    <div class="eyebrow">05 · QA validation — interactive</div>
     <h2>Five validation steps. Every claim includes evidence.</h2>
     <p class="lede">Choose a step to see the evidence it produced in this run. Steps 1 and 2 always run; the QA instructions decide which remaining steps apply. Every skipped step must explain why.</p>
     <div class="grid g2" style="align-items:start">
@@ -538,7 +539,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 <!-- 6 ─────────────────────────────── -->
 <section class="slide" aria-label="Replay of the run">
   <div class="inner">
-    <div class="eyebrow">05 · Replay — interactive</div>
+    <div class="eyebrow">06 · Replay — interactive</div>
     <h2>The run, as it actually happened</h2>
     <p class="lede">Real timestamps from 15 September 2026. Press play and watch both lanes move: A takes the build lock, B waits, then both validate.</p>
     <div class="replay">
@@ -565,7 +566,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 <!-- 7 ─────────────────────────────── -->
 <section class="slide" aria-label="Evidence">
   <div class="inner">
-    <div class="eyebrow">06 · Evidence — interactive</div>
+    <div class="eyebrow">07 · Evidence — interactive</div>
     <h2>What "verified" means here</h2>
     <p class="lede">Switch lanes to see the real artifacts. Neither feature was accepted on a test result alone — both were driven in a real authenticated browser.</p>
     <div class="tabs" role="tablist" aria-label="Lane">
@@ -579,7 +580,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 <!-- 9 ─────────────────────────────── -->
 <section class="slide resource-slide" aria-label="VPS resource usage">
   <div class="inner">
-    <div class="eyebrow">07 · VPS capacity</div>
+    <div class="eyebrow">08 · VPS capacity</div>
     <h2>Two parallel QA environments fit on one 8-vCPU, 32-GiB VPS</h2>
     <p class="lede">Measured during the scoped six-service, two-slot acceptance run. Across 290 host samples, memory and disk kept substantial headroom and the kernel reported no out-of-memory events.</p>
     <div class="resource-stats">
@@ -874,7 +875,7 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
     ['Build both features','Agent · zora-implementer','Separate implementer agents build Feature A and Feature B at the same time in different worktrees.','Each lane produces code and tests without touching the other lane.'],
     ['Run local checks','Agent · Claude lead','Claude runs formatting, type checks and tests for each feature. If a check fails, that lane returns to Build for a fix and repeats this stage.','Only a passing commit can enter the VPS queue.'],
     ['Queue the QA work','Service · VPS queue worker','Both QA requests can wait together. The worker assigns the next safe slot; heavy environment startup takes turns to protect the VPS disk.','Feature A enters slot 1 and Feature B enters slot 2 as capacity becomes available.'],
-    ['Run independent QA','Agent · Codex QA','Each slot has private Docker, Kubernetes, data and browser processes. Once both environments are ready, the two Codex agents validate in parallel. If QA fails, only that feature returns for a fix, local checks and another QA run.','Two independent verdicts with no cross-contamination.'],
+    ['Run independent QA','Agent · Codex QA','Each slot has private Docker, Kubernetes, data and browser processes. Once both environments are ready, the two Codex agents validate in parallel. If QA confirms a product defect, only that feature returns for a fix, local checks and another QA run. An environment problem retries the same commit.','Two independent verdicts with no cross-contamination.'],
     ['Return & check evidence','Owners · VPS supervisor + Claude lead','Each slot returns its own logs, screenshots and verdict. The harness confirms that the evidence belongs to the exact commit that was tested.','A trusted result for each feature.'],
     ['Review & deliver','Owners · Claude lead + reviewers','Claude opens a pull request for each accepted feature and handles review feedback. Any code change that needs revalidation goes through checks and QA again.','Reviewed pull requests with green CI and verified QA evidence.']
   ];
