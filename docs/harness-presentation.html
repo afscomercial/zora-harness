@@ -279,37 +279,130 @@ img{max-width:100%; display:block}
 }
 
 /* Interactive overview */
-.flow-map{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-.flow-node{font:inherit;text-align:left;padding:12px 15px;border:1px solid var(--line-strong);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer;transition:background .25s,border-color .25s,transform .25s}
-.flow-node small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
-.flow-node strong{font-size:15px}
-.flow-node[aria-pressed="true"]{border-color:var(--lane-b);background:var(--surface-2);transform:translateY(-2px);box-shadow:inset 3px 0 var(--lane-b)}
-.flow-node:focus-visible{outline:2px solid var(--lane-b);outline-offset:3px}
-.flow-detail{display:grid;grid-template-columns:1.3fr 1fr;gap:24px;min-height:145px}
-.flow-detail p{color:var(--muted);font-size:15px;margin-top:8px}
-.flow-output{border-left:2px solid var(--lane-a);padding-left:18px}
-.flow-output small{color:var(--lane-a);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em}
-.flow-footer{font-size:13px;color:var(--muted)}
-@media(max-width:860px){.flow-map{grid-template-columns:repeat(2,minmax(0,1fr))}.flow-detail{grid-template-columns:1fr;gap:12px}}
+#flowSlide .inner{gap:12px}
+.flow-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font:11px var(--mono);color:var(--muted)}
+.flow-key{display:inline-flex;align-items:center;gap:6px}
+.flow-key::before{content:"";width:20px;height:3px;border-radius:999px;background:currentColor}
+.flow-key.a{color:var(--lane-a)}
+.flow-key.b{color:var(--lane-b)}
+.flow-key.retry{color:var(--fail)}
+.flow-board{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px 10px;overflow:hidden}
+.flow-shared{display:flex;align-items:center;justify-content:center;gap:24px;margin-bottom:9px}
+.flow-fork{display:flex;align-items:center;gap:8px;color:var(--muted);font:11px var(--mono);text-transform:uppercase;letter-spacing:.08em}
+.flow-fork-mark{display:grid;place-items:center;width:27px;height:27px;border:1px solid var(--line-strong);border-radius:50%;color:var(--ink);background:var(--surface-2);animation:forkPulse 2.2s ease-in-out infinite}
+.flow-columns,.lane-row{display:grid;grid-template-columns:82px repeat(6,minmax(0,1fr));gap:15px;align-items:center}
+.flow-columns{min-height:22px;margin-bottom:4px;font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--faint);text-align:center}
+.flow-columns .queue-label{grid-column:4}
+.flow-columns .vps-label{grid-column:5;color:var(--pass)}
+.parallel-lanes{display:flex;flex-direction:column;gap:8px}
+.lane-row{--lane:var(--lane-a)}
+.lane-row.b{--lane:var(--lane-b)}
+.lane-label{display:flex;flex-direction:column;gap:2px;padding-left:9px;border-left:3px solid var(--lane);font:11px var(--mono);color:var(--lane)}
+.lane-label strong{font:700 13px var(--display);color:var(--ink)}
+.flow-card{position:relative;min-width:0;min-height:58px;padding:8px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:inherit;text-align:left;cursor:pointer;transition:border-color .25s,transform .25s,box-shadow .25s,opacity .25s;z-index:1}
+.flow-card strong{display:block;font:700 12.5px var(--display);line-height:1.2}
+.flow-card small{display:block;margin-top:3px;color:var(--muted);font-size:10.5px;line-height:1.25}
+.flow-card:hover{border-color:var(--line-strong);transform:translateY(-1px)}
+.flow-card:focus-visible{outline:2px solid var(--lane-b);outline-offset:2px}
+.flow-card[aria-pressed="true"]{border-color:var(--lane);box-shadow:0 0 0 1px color-mix(in srgb,var(--lane) 30%,transparent),0 0 18px color-mix(in srgb,var(--lane) 16%,transparent)}
+.flow-card.shared{width:190px;min-height:48px;border-color:var(--line-strong)}
+.flow-card.shared[aria-pressed="true"]{--lane:var(--lane-b)}
+.lane-card:not(.final)::after{content:"";position:absolute;z-index:-1;left:100%;top:50%;width:16px;height:2px;background:color-mix(in srgb,var(--lane) 55%,var(--line));transform:translateY(-50%)}
+.lane-card:not(.final)::before{content:"";position:absolute;z-index:3;top:calc(50% - 3px);right:-4px;width:6px;height:6px;border-radius:50%;background:var(--lane);box-shadow:0 0 8px var(--lane);animation:lanePulse 1.6s linear infinite}
+.lane-row.b .lane-card::before{animation-delay:.75s}
+.queue-card{overflow:hidden}
+.queue-ticket{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;margin-top:4px;border:1px solid var(--lane);border-radius:5px;color:var(--lane);background:var(--ground);font:700 10px var(--mono)}
+.queue-wait{display:inline-flex;gap:2px;margin-left:4px;vertical-align:middle}
+.queue-wait i{display:block;width:3px;height:3px;border-radius:50%;background:var(--lane);animation:waitDot 1.1s ease-in-out infinite}
+.queue-wait i:nth-child(2){animation-delay:.18s}.queue-wait i:nth-child(3){animation-delay:.36s}
+.flow-board[data-current="4"] .queue-ticket{animation:ticketMove 2.4s ease-in-out infinite}
+.slot-card{border-color:color-mix(in srgb,var(--pass) 48%,var(--line));background:linear-gradient(135deg,color-mix(in srgb,var(--pass) 7%,var(--surface-2)),var(--surface-2))}
+.slot-led{position:absolute;right:8px;top:8px;width:7px;height:7px;border-radius:50%;background:var(--pass);box-shadow:0 0 0 0 color-mix(in srgb,var(--pass) 55%,transparent);animation:slotLive 1.6s ease-out infinite}
+.flow-board[data-current="5"] .slot-card{border-color:var(--pass);box-shadow:0 0 16px color-mix(in srgb,var(--pass) 18%,transparent)}
+.retry-routes{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;margin-top:9px}
+.retry-loop{position:relative;display:flex;align-items:center;gap:8px;min-height:28px;padding:5px 10px;border:1px dashed color-mix(in srgb,var(--fail) 55%,var(--line));border-radius:7px;color:var(--fail);background:color-mix(in srgb,var(--fail) 4%,var(--surface));font:10.5px var(--mono);transition:border-color .25s,background .25s}
+.retry-loop b{color:var(--ink);font-weight:600}
+.retry-arrow{display:inline-block;letter-spacing:2px;white-space:nowrap;animation:retryBack 1.3s ease-in-out infinite}
+.flow-board[data-current="3"] .check-loop,.flow-board[data-current="5"] .qa-loop{border-color:var(--fail);background:color-mix(in srgb,var(--fail) 10%,var(--surface));box-shadow:0 0 14px color-mix(in srgb,var(--fail) 14%,transparent)}
+.flow-detail{display:grid;grid-template-columns:1.35fr 1fr;gap:18px;min-height:100px;padding:12px 16px}
+.flow-detail p{color:var(--muted);font-size:13px;margin-top:5px;line-height:1.4}
+.flow-detail h3{font-size:16px}
+.flow-output{border-left:2px solid var(--lane-a);padding-left:15px}
+.flow-output small{color:var(--lane-a);font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.1em}
+.flow-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.flow-actions .ctrl{padding:7px 14px;font-size:12px}
+.flow-footer{font-size:12px;color:var(--muted)}
+@keyframes lanePulse{0%{right:0;opacity:0}20%{opacity:1}80%{opacity:1}100%{right:-16px;opacity:0}}
+@keyframes forkPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--lane-b) 0%,transparent)}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--lane-b) 12%,transparent)}}
+@keyframes waitDot{0%,70%,100%{opacity:.2;transform:translateY(0)}35%{opacity:1;transform:translateY(-2px)}}
+@keyframes ticketMove{0%{transform:translateX(0);opacity:.55}45%{transform:translateX(28px);opacity:1}70%,100%{transform:translateX(42px);opacity:0}}
+@keyframes slotLive{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--pass) 50%,transparent)}100%{box-shadow:0 0 0 8px color-mix(in srgb,var(--pass) 0%,transparent)}}
+@keyframes retryBack{0%,100%{transform:translateX(5px);opacity:.45}50%{transform:translateX(-4px);opacity:1}}
+@media(max-width:860px){
+  .flow-columns{display:none}.flow-shared{justify-content:flex-start;overflow-x:auto}.flow-fork{display:none}
+  .lane-row{grid-template-columns:72px repeat(6,132px);gap:12px;min-width:930px}.parallel-lanes{overflow-x:auto;padding-bottom:5px}
+  .retry-routes{grid-template-columns:1fr}.flow-detail{grid-template-columns:1fr;gap:9px}.flow-output{border-left:0;border-top:2px solid var(--lane-a);padding:8px 0 0}
+}
+@media(max-height:800px) and (min-width:861px){
+  #flowSlide .inner{gap:8px}#flowSlide h2{font-size:29px}#flowSlide .lede{font-size:14px}.flow-board{padding-top:8px;padding-bottom:7px}
+  .flow-shared{margin-bottom:5px}.flow-card{min-height:52px;padding:6px 8px}.flow-card.shared{min-height:42px}.retry-routes{margin-top:6px}.flow-detail{min-height:86px;padding:9px 14px}.flow-footer{font-size:11px}
+}
 </style>
 </head>
 <body>
 
 <main class="deck" id="deck">
 
-<section class="slide on" id="flowSlide" aria-label="Complete harness flow">
+<section class="slide on" id="flowSlide" aria-label="Complete parallel harness flow">
   <div class="inner">
     <div class="eyebrow">Start here · interactive overview</div>
-    <h2>From a feature request to a reviewed pull request</h2>
-    <p class="lede">Claude coordinates each feature on your machine. Codex tests it on the VPS. Click any stage, or play the walkthrough.</p>
-    <div class="flow-map" id="flowMap" role="group" aria-label="Explore the harness stages"></div>
+    <h2>Two features move through the harness at the same time</h2>
+    <p class="lede">Claude coordinates two separate development lanes. The VPS queue sends each feature to its own QA slot, while failures loop back for a fix and another check.</p>
+    <div class="flow-legend" aria-label="Flow colors">
+      <span class="flow-key a">Feature A</span><span class="flow-key b">Feature B</span><span class="flow-key retry">Return for a fix</span>
+    </div>
+    <div class="flow-board" id="flowBoard" data-current="0">
+      <div class="flow-shared">
+        <button class="flow-card shared" type="button" data-stage="0"><strong>1. Request &amp; plan</strong><small>zora-planner defines the work</small></button>
+        <span aria-hidden="true">→</span>
+        <button class="flow-card shared" type="button" data-stage="1"><strong>2. Approve</strong><small>You approve the plan</small></button>
+        <div class="flow-fork"><span class="flow-fork-mark">⑂</span><span>two independent lanes</span></div>
+      </div>
+      <div class="flow-columns" aria-hidden="true">
+        <span></span><span>Develop</span><span>Local gate</span><span class="queue-label">VPS queue</span><span class="vps-label">2 QA slots</span><span>Proof</span><span>Delivery</span>
+      </div>
+      <div class="parallel-lanes">
+        <div class="lane-row a">
+          <div class="lane-label"><strong>Feature A</strong><span>orange path</span></div>
+          <button class="flow-card lane-card" type="button" data-stage="2"><strong>3. Build</strong><small>zora-implementer</small></button>
+          <button class="flow-card lane-card" type="button" data-stage="3"><strong>4. Checks</strong><small>Claude runs gates</small></button>
+          <button class="flow-card lane-card queue-card" type="button" data-stage="4"><strong>5. Queue</strong><span class="queue-ticket">A</span><span class="queue-wait" aria-hidden="true"><i></i><i></i><i></i></span></button>
+          <button class="flow-card lane-card slot-card" type="button" data-stage="5"><span class="slot-led" aria-hidden="true"></span><strong>6. VPS slot 1</strong><small>Codex QA · isolated</small></button>
+          <button class="flow-card lane-card" type="button" data-stage="6"><strong>7. Evidence</strong><small>Result + proof</small></button>
+          <button class="flow-card lane-card final" type="button" data-stage="7"><strong>8. Review</strong><small>Pull request</small></button>
+        </div>
+        <div class="lane-row b">
+          <div class="lane-label"><strong>Feature B</strong><span>blue path</span></div>
+          <button class="flow-card lane-card" type="button" data-stage="2"><strong>3. Build</strong><small>zora-implementer</small></button>
+          <button class="flow-card lane-card" type="button" data-stage="3"><strong>4. Checks</strong><small>Claude runs gates</small></button>
+          <button class="flow-card lane-card queue-card" type="button" data-stage="4"><strong>5. Queue</strong><span class="queue-ticket">B</span><span class="queue-wait" aria-hidden="true"><i></i><i></i><i></i></span></button>
+          <button class="flow-card lane-card slot-card" type="button" data-stage="5"><span class="slot-led" aria-hidden="true"></span><strong>6. VPS slot 2</strong><small>Codex QA · isolated</small></button>
+          <button class="flow-card lane-card" type="button" data-stage="6"><strong>7. Evidence</strong><small>Result + proof</small></button>
+          <button class="flow-card lane-card final" type="button" data-stage="7"><strong>8. Review</strong><small>Pull request</small></button>
+        </div>
+      </div>
+      <div class="retry-routes" aria-label="Failure return paths">
+        <div class="retry-loop check-loop"><span class="retry-arrow">← ←</span><b>Checks fail:</b> return to Build, fix, and check again</div>
+        <div class="retry-loop qa-loop"><span class="retry-arrow">← ← ←</span><b>QA fails:</b> return to Build, then repeat Checks → Queue → QA</div>
+      </div>
+    </div>
     <div class="panel flow-detail" id="flowDetail" aria-live="polite" aria-atomic="true"></div>
-    <div class="ctrls">
-      <button class="ctrl" id="flowPlay" type="button">▶ Play walkthrough</button>
+    <div class="flow-actions">
+      <button class="ctrl" id="flowPlay" type="button">▶ Play both lanes</button>
       <button class="ctrl ghost" id="flowReset" type="button">Start over</button>
       <span class="clock" id="flowCount">Stage 1 of 8</span>
+      <span class="flow-footer">Colored arrows keep moving because the two feature lanes remain independent throughout the flow.</span>
     </div>
-    <p class="flow-footer">Multiple features can follow this flow at once in separate worktrees. This VPS has two QA slots: environment startup takes turns; ready environments can validate concurrently.</p>
   </div>
 </section>
 
@@ -776,40 +869,39 @@ slot 2  62aa0c3d   <span class="dim">lane B</span>
 
   /* Complete flow: illustrative walkthrough, separate from the recorded demo. */
   var FLOW = [
-    ['Request & plan','Agent · zora-planner','You describe the feature. The Claude lead creates a separate worktree, then zora-planner defines the scope, approach and success criteria.','A feature plan and an independent workspace.'],
-    ['Approve the plan','Owner · You','You review the proposed behavior and approve the plan before implementation starts.','An agreed plan that guides development and QA.'],
-    ['Build the feature','Agent · zora-implementer','zora-implementer changes the code and adds tests in this feature’s worktree. The Claude lead coordinates the work.','Code and tests for this feature.'],
-    ['Check & submit','Agent · Claude lead','The Claude lead checks code quality, types and tests. Once they pass, it pushes the exact commit and sends QA instructions describing what to test and which services to start.','An immutable QA request tied to one commit.'],
-    ['Queue & prepare','Service · VPS queue worker','The Python queue worker assigns an available slot. It starts private Docker, a Kind Kubernetes cluster, Tilt and test data. A shared startup lock limits heavy builds to one at a time.','An isolated environment running the requested commit.'],
-    ['Run independent QA','Agent · Codex QA','Codex follows the validation steps, including applicable API, database and authenticated browser checks. It records results, logs and screenshots.','A PASS, FAIL or INCOMPLETE verdict with supporting evidence.'],
-    ['Return & check evidence','Owners · VPS supervisor + Claude lead','The VPS supervisor checks cleanup before reusing the slot. The harness downloads the result; the local checker and Claude lead inspect the commit identity, required checks and evidence.','A verified result for this feature. FAIL returns to zora-implementer for a code fix; INCOMPLETE repairs QA and retries the same commit.'],
-    ['Review & deliver','Owners · Claude lead + reviewers','After accepted QA, the Claude lead opens the feature’s pull request, handles review feedback and checks CI with the reviewers. Changes that need revalidation return through the checks.','A reviewed pull request with green CI. The harness stops here; merging is a separate decision.']
+    ['Request & plan','Agent · zora-planner','You describe each feature. Claude creates a separate worktree, and zora-planner defines the goal and success criteria.','Two approved pieces of work can enter the harness independently.'],
+    ['Approve the plan','Owner · You','You confirm the expected behavior before autonomous development starts.','Each approved feature continues in its own colored lane.'],
+    ['Build both features','Agent · zora-implementer','Separate implementer agents build Feature A and Feature B at the same time in different worktrees.','Each lane produces code and tests without touching the other lane.'],
+    ['Run local checks','Agent · Claude lead','Claude runs formatting, type checks and tests for each feature. If a check fails, that lane returns to Build for a fix and repeats this stage.','Only a passing commit can enter the VPS queue.'],
+    ['Queue the QA work','Service · VPS queue worker','Both QA requests can wait together. The worker assigns the next safe slot; heavy environment startup takes turns to protect the VPS disk.','Feature A enters slot 1 and Feature B enters slot 2 as capacity becomes available.'],
+    ['Run independent QA','Agent · Codex QA','Each slot has private Docker, Kubernetes, data and browser processes. Once both environments are ready, the two Codex agents validate in parallel. If QA fails, only that feature returns for a fix, local checks and another QA run.','Two independent verdicts with no cross-contamination.'],
+    ['Return & check evidence','Owners · VPS supervisor + Claude lead','Each slot returns its own logs, screenshots and verdict. The harness confirms that the evidence belongs to the exact commit that was tested.','A trusted result for each feature.'],
+    ['Review & deliver','Owners · Claude lead + reviewers','Claude opens a pull request for each accepted feature and handles review feedback. Any code change that needs revalidation goes through checks and QA again.','Reviewed pull requests with green CI and verified QA evidence.']
   ];
   var flowIndex=0, flowTimer=null;
-  var flowMap=document.getElementById('flowMap');
+  var flowBoard=document.getElementById('flowBoard');
   var flowPlay=document.getElementById('flowPlay');
+  var flowCards=Array.prototype.slice.call(document.querySelectorAll('#flowBoard [data-stage]'));
   function pauseFlow(){
     clearInterval(flowTimer); flowTimer=null;
-    if(flowPlay) flowPlay.textContent='▶ Play walkthrough';
+    if(flowPlay) flowPlay.textContent='▶ Play both lanes';
   }
   function showFlow(i){
     flowIndex=i;
-    Array.prototype.forEach.call(flowMap.children,function(b,j){b.setAttribute('aria-pressed',String(j===i));});
+    flowBoard.setAttribute('data-current',String(i));
+    flowCards.forEach(function(card){card.setAttribute('aria-pressed',String(Number(card.getAttribute('data-stage'))===i));});
     var f=FLOW[i];
-    document.getElementById('flowDetail').innerHTML='<div><span class="tag t-b">'+f[1]+'</span><h3 style="margin-top:10px">'+(i+1)+'. '+f[0]+'</h3><p>'+f[2]+'</p></div><div class="flow-output"><small>What comes next</small><p>'+f[3]+'</p></div>';
+    document.getElementById('flowDetail').innerHTML='<div><span class="tag t-b">'+f[1]+'</span><h3 style="margin-top:7px">'+(i+1)+'. '+f[0]+'</h3><p>'+f[2]+'</p></div><div class="flow-output"><small>What comes next</small><p>'+f[3]+'</p></div>';
     document.getElementById('flowCount').textContent='Stage '+(i+1)+' of '+FLOW.length;
   }
-  FLOW.forEach(function(f,i){
-    var b=document.createElement('button');b.type='button';b.className='flow-node';
-    b.setAttribute('aria-controls','flowDetail');
-    b.innerHTML='<strong>'+(i+1)+'. '+f[0]+' →</strong><small>'+f[1]+'</small>';
-    b.addEventListener('click',function(){pauseFlow();showFlow(i);});flowMap.appendChild(b);
+  flowCards.forEach(function(card){
+    card.addEventListener('click',function(){pauseFlow();showFlow(Number(card.getAttribute('data-stage')));});
   });
   flowPlay.addEventListener('click',function(){
     if(flowTimer){pauseFlow();return;}
     if(flowIndex===FLOW.length-1)showFlow(0);
-    flowPlay.textContent='❚❚ Pause walkthrough';
-    flowTimer=setInterval(function(){showFlow(flowIndex+1);if(flowIndex===FLOW.length-1)pauseFlow();},6500);
+    flowPlay.textContent='❚❚ Pause both lanes';
+    flowTimer=setInterval(function(){showFlow(flowIndex+1);if(flowIndex===FLOW.length-1)pauseFlow();},4200);
   });
   document.getElementById('flowReset').addEventListener('click',function(){pauseFlow();showFlow(0);});
   showFlow(0);
