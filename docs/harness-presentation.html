@@ -467,7 +467,7 @@ img{max-width:100%; display:block}
       <div class="panel qa-step-detail" id="rungPanel" aria-live="polite"></div>
       <div class="panel replay qa-replay">
         <div class="qa-replay-head">
-          <div><h3>Watch the real two-slot run</h3><p class="note">A starts first, B waits for the build lock, then both perform QA.</p></div>
+          <div><h3>Watch the real two-slot run</h3><p class="note">A prepares its environment first. B waits for the startup lock, then both can perform QA.</p></div>
           <div class="ctrls">
             <button class="ctrl" id="playBtn">▶ Play</button>
             <button class="ctrl ghost" id="resetBtn">Reset</button>
@@ -548,10 +548,10 @@ img{max-width:100%; display:block}
         <div class="resource-facts">
           <div class="resource-fact"><b>274.4 GiB</b><span>minimum free disk observed</span></div>
           <div class="resource-fact"><b>0 OOM</b><span>out-of-memory events</span></div>
-          <div class="resource-fact"><b>37m / 25m</b><span>cold bootstrap: A / B</span></div>
+          <div class="resource-fact"><b>37m / 25m</b><span>cold environment preparation: A / B</span></div>
           <div class="resource-fact"><b>~20 GiB × 2</b><span>BuildKit cache target</span></div>
         </div>
-        <p class="note" style="margin-top:10px">Storage I/O was the bottleneck. Bootstrap runs one slot at a time to control that peak; once ready, both Codex validations overlap.</p>
+        <p class="note" style="margin-top:10px">Storage I/O was the bottleneck. Environment preparation runs one slot at a time to control that peak; once ready, both Codex validations overlap.</p>
       </div>
     </div>
     <p class="note">Capacity conclusion applies to this six-service profile. Larger service combinations and repeated cold builds still need measurement before adding more slots.</p>
@@ -716,13 +716,13 @@ img{max-width:100%; display:block}
   /* ---------- replay ---------- */
   var TOTAL = 115; /* minutes from 02:04 */
   var A_EV = [
-    {t:2,  label:'building'},       {t:39, label:'ready'},
+    {t:2,  label:'preparing'},      {t:39, label:'ready'},
     {t:41, label:'step 1 ✓', pass:true}, {t:45, label:'step 2 ✓', pass:true},
     {t:52, label:'step 4 ✓', pass:true}, {t:57, label:'step 5 ✓', pass:true},
     {t:62, label:'PASS', pass:true}
   ];
   var B_EV = [
-    {t:2,  label:'waiting'},        {t:44, label:'building'},
+    {t:2,  label:'waiting'},        {t:44, label:'preparing'},
     {t:80, label:'ready'},      {t:84, label:'step 1 ✓', pass:true},
     {t:88, label:'step 2 ✓', pass:true}, {t:96, label:'step 4 ✓', pass:true},
     {t:102,label:'step 5 ✓', pass:true}, {t:108,label:'PASS', pass:true}
@@ -760,8 +760,8 @@ img{max-width:100%; display:block}
     B_EV.forEach(function(e){ if (t>=e.t){ e.el.classList.add('in'); lb = e.label; } });
     phaseA.textContent = la || 'dispatched'; phaseA.classList.toggle('show', t>0);
     phaseB.textContent = lb || 'dispatched'; phaseB.classList.toggle('show', t>0);
-    var note = t < 44 ? ' — A holds the build lock, B waits'
-             : (t < 62 ? ' — both lanes active' : ' — B validating alone');
+    var note = t < 44 ? ' — A prepares, B waits'
+             : (t < 62 ? ' — A runs QA, B prepares' : ' — B runs QA');
     clock.textContent = stamp(t) + (t>=TOTAL ? ' — both PASS' : note);
   }
   function reset(){
