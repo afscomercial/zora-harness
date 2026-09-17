@@ -524,20 +524,20 @@ img{max-width:100%; display:block}
     </div>
     <div class="resource-grid">
       <div class="panel">
-        <h3>Measured usage during the two-slot run</h3>
+        <h3>Measured memory — all bars use the 31.34 GiB VPS total</h3>
         <div class="resource-row">
-          <div class="resource-label"><span>Host memory still available at the busiest sample</span><strong>21.87 / 31.34 GiB · 70%</strong></div>
-          <div class="meter"><span class="meter-fill pass" style="--w:69.8%"></span></div>
+          <div class="resource-label"><span>Whole VPS used at the busiest sample</span><strong>9.47 / 31.34 GiB · 30%</strong></div>
+          <div class="meter"><span class="meter-fill pass" style="--w:30.2%"></span></div>
         </div>
         <div class="resource-row">
-          <div class="resource-label"><span>Lane A process peak</span><strong>4.83 / 7.81 GiB cap · 62%</strong></div>
-          <div class="meter"><span class="meter-fill a" style="--w:61.8%"></span></div>
+          <div class="resource-label"><span>Feature A tracked-process peak</span><strong>4.83 / 31.34 GiB · 15%</strong></div>
+          <div class="meter"><span class="meter-fill a" style="--w:15.4%"></span></div>
         </div>
         <div class="resource-row">
-          <div class="resource-label"><span>Lane B process peak</span><strong>4.28 / 7.81 GiB cap · 55%</strong></div>
-          <div class="meter"><span class="meter-fill" style="--w:54.8%"></span></div>
+          <div class="resource-label"><span>Feature B tracked-process peak</span><strong>4.28 / 31.34 GiB · 14%</strong></div>
+          <div class="meter"><span class="meter-fill" style="--w:13.7%"></span></div>
         </div>
-        <p class="note" style="margin-top:11px">The lane peaks cover their runner and browser processes. Host sampling also captures Docker, BuildKit, Kind and the operating system.</p>
+        <p class="note" style="margin-top:11px">The whole-VPS bar includes both features, Docker, Kind, BuildKit and Linux. Feature peaks show only their runner and browser processes and may occur at different times, so do not add the bars together.</p>
       </div>
       <div class="panel">
         <h3>Capacity reserved before work starts</h3>
